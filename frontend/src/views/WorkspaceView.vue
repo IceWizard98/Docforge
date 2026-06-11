@@ -5,7 +5,9 @@ import { FileText } from '@lucide/vue'
 
 <template>
   <div class="flex h-screen bg-white">
-    <DocumentListPanel />
+    <div class="hidden md:block w-64 shrink-0">
+      <DocumentListPanel />
+    </div>
 
     <!-- Welcome / empty state -->
     <main class="flex-1 flex items-center justify-center">
