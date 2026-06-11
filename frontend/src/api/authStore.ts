@@ -25,6 +25,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
   const currentUser = ref<User | null>(parsedUser)
 
+  const initialized = ref(false)
   const isAuthenticated = computed(() => !!token.value)
 
   function setAuth(data: AuthResponse) {
@@ -81,11 +82,13 @@ export const useAuthStore = defineStore('auth', () => {
         }
       }
     }
+    initialized.value = true
   }
 
   return {
     token,
     currentUser,
+    initialized,
     isAuthenticated,
     login,
     register,

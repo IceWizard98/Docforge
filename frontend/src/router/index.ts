@@ -48,19 +48,24 @@ const routes = [
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/workspace/default',
+    name: 'not-found',
+    component: () => import('@/views/NotFoundView.vue'),
   },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
+  scrollBehavior: () => ({ top: 0 }),
 })
 
 router.beforeEach((to, _from, next) => {
   const publicPages = ['login', 'register']
   if (!publicPages.includes(to.name as string)) {
     const authStore = useAuthStore()
+    if (!authStore.initialized) {
+      authStore.checkToken()
+    }
     if (!authStore.isAuthenticated) {
       return next({ name: 'login', query: { redirect: to.fullPath } })
     }
