@@ -11,8 +11,7 @@ const hasId = !!route.params.id
 </script>
 
 <template>
-  <DocumentEditor v-if="hasId && documentStore.currentDocId" />
-  <LoadingSpinner v-else-if="hasId && documentStore.loading" size="lg" />
+  <DocumentEditor v-if="hasId" />
   <div v-else class="flex items-center justify-center h-screen text-foreground/40 text-sm">
     Document ID is missing
   </div>

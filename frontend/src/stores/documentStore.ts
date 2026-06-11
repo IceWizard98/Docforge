@@ -26,7 +26,7 @@ export const useDocumentStore = defineStore('document', () => {
     currentDocId.value = id
 
     try {
-      const response = await apiClient.get(`/api/documents/${id}`)
+      const response = await apiClient.get(`/documents/${id}`)
       const data = response.data
       title.value = data.title || ''
       status.value = data.status || 'draft'
@@ -49,7 +49,7 @@ export const useDocumentStore = defineStore('document', () => {
     error.value = null
 
     try {
-      await apiClient.patch(`/api/documents/${currentDocId.value}`, { title: newTitle })
+      await apiClient.patch(`/documents/${currentDocId.value}`, { title: newTitle })
       title.value = newTitle
     } catch (e: any) {
       error.value = e?.response?.data?.detail || e.message || 'Failed to update title'
@@ -61,7 +61,7 @@ export const useDocumentStore = defineStore('document', () => {
     if (!id) return
     error.value = null
     try {
-      await apiClient.patch(`/api/documents/${id}`, { content: json })
+      await apiClient.patch(`/documents/${id}`, { content: json })
     } catch (e: any) {
       error.value = e?.response?.data?.detail || e.message || 'Failed to save content'
     }
@@ -72,7 +72,7 @@ export const useDocumentStore = defineStore('document', () => {
     error.value = null
 
     try {
-      await apiClient.patch(`/api/documents/${currentDocId.value}/sections/${sectionId}`, {
+      await apiClient.patch(`/documents/${currentDocId.value}/sections/${sectionId}`, {
         status: newStatus,
       })
       const idx = sections.value.findIndex((s) => s.id === sectionId)
