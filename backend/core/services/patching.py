@@ -1,7 +1,10 @@
+import logging
 from copy import deepcopy
 from uuid import uuid4
 
 from ports.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 PATCH_PROMPT_TEMPLATE = """Given document content and modification instructions, make a patch plan.
 
@@ -51,7 +54,7 @@ class PatchService:
                     "operations": result.get("operations", []),
                 }
             except Exception:
-                pass
+                logger.exception("LLM patch plan generation failed")
         return {
             "id": f"ps_{uuid4().hex[:8]}",
             "document_id": document.get("id", ""),

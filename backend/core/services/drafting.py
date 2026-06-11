@@ -1,7 +1,10 @@
+import logging
 from dataclasses import dataclass, field
 from uuid import uuid4
 
 from ports.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,7 +87,7 @@ class DraftService:
                     },
                 }
             except Exception:
-                pass
+                logger.exception("LLM spec generation failed for session %s", chat_session_id)
         spec = {
             "draft_id": f"draft_{uuid4().hex[:8]}",
             "chat_session_id": chat_session_id,
@@ -133,7 +136,11 @@ class DraftService:
                     "provenance": provenance,
                 }
             except Exception:
-                pass
+                logger.exception(
+                    "LLM section generation failed for %s/%s",
+                    spec.get("draft_id", ""),
+                    section.get("section_id", ""),
+                )
         return {
             "section_id": section.get("section_id", f"sec_{uuid4().hex[:8]}"),
             "title": section.get("title", ""),
