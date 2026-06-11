@@ -42,6 +42,7 @@ class UserModel(Base):
     display_name = Column(String(255))
     role = Column(String(32), nullable=False, default="editor")
     password_hash = Column(String(255), nullable=False)
+    email_verified = Column(Boolean, nullable=False, default=False)
     settings = Column(JSON, nullable=False, default=dict)
     last_login_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
