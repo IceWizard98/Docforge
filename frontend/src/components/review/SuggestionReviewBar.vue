@@ -68,7 +68,7 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(() => {
   const docId = route.params.id as string
   if (docId) {
-    suggestionStore.fetchSuggestions(docId)
+    suggestionStore.loadSuggestions(docId)
   }
   window.addEventListener('keydown', handleKeydown)
 })

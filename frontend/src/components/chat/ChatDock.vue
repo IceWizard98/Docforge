@@ -135,14 +135,23 @@ async function send() {
 async function handleAction(action: ChatActionPayload) {
   isSending.value = true
   error.value = null
-  const description = typeof action.payload?.description === 'string'
-    ? action.payload.description
-    : `Apply action: ${action.label}`
+
+  let contextMessage = ''
+  const actionType = (action.type as string)
+  if (actionType === 'suggest_draft') {
+    contextMessage = 'Vorrei che tu generassi una bozza di documento per me.'
+  } else if (actionType === 'suggest_patches') {
+    contextMessage = 'Vorrei che tu proponessi delle modifiche al documento.'
+  } else if (actionType === 'validate') {
+    contextMessage = 'Vorrei che tu validassi il documento.'
+  } else {
+    contextMessage = action.label || `Esegui azione: ${actionType}`
+  }
 
   messages.value.push({
     id: `action_${Date.now()}`,
     role: 'user',
-    content: description,
+    content: contextMessage,
     timestamp: new Date().toISOString(),
   })
 
@@ -150,7 +159,7 @@ async function handleAction(action: ChatActionPayload) {
   messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
 
   try {
-    const response = await sendMessageInternal(description)
+    const response = await sendMessageInternal(contextMessage)
     if (response.role === 'assistant') {
       messages.value.push({
         id: response.id,
@@ -166,9 +175,6 @@ async function handleAction(action: ChatActionPayload) {
   } finally {
     isSending.value = false
   }
-
-  await nextTick()
-  messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
 }
 
 function handleRetry() {

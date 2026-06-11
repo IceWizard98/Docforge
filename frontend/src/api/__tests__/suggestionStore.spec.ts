@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSuggestionStore } from '../suggestionStore'
 import type { Suggestion } from '@/types/document'
@@ -9,15 +9,13 @@ function makeSuggestion(id: string, status: Suggestion['status'], type: Suggesti
 }
 
 describe('suggestionStore', () => {
-  let spyPost: ReturnType<typeof vi.spyOn>
-
   beforeEach(() => {
     setActivePinia(createPinia())
-    spyPost = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} })
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} })
   })
 
   afterEach(() => {
-    spyPost.mockRestore()
+    vi.restoreAllMocks()
   })
 
   it('initializes empty', () => {

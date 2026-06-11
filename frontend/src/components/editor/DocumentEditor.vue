@@ -14,7 +14,6 @@ import { useDocumentStore } from '@/stores/documentStore'
 import { useDocumentDiff } from '@/composables/useDocumentDiff'
 import { saveDocumentVersion } from '@/api/client'
 import { PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Layers, MessageSquare, Save } from '@lucide/vue'
-import type { Comment } from '@/types/document'
 
 const route = useRoute()
 const editorStore = useEditorStore()
@@ -40,29 +39,6 @@ const isDiffMode = computed(() => mode.value === 'diff')
 
 const editorProp = computed(() => ({ value: editorRef.value?.editor || null }))
 
-const stubComments = ref<Comment[]>([
-  {
-    commentId: 'c1',
-    threadId: 't1',
-    author: 'Alice',
-    text: 'This section needs more detail on liability terms.',
-    resolved: false,
-    createdAt: new Date().toISOString(),
-    replies: [
-      { replyId: 'r1', author: 'Bob', text: 'Agreed, I will revise.', createdAt: new Date().toISOString() },
-    ],
-  },
-  {
-    commentId: 'c2',
-    threadId: 't2',
-    author: 'Charlie',
-    text: 'Consider adding a termination clause here.',
-    resolved: true,
-    createdAt: new Date().toISOString(),
-    replies: [],
-  },
-])
-
 onMounted(() => {
   const docId = route.params.id as string
   if (docId) {
@@ -79,12 +55,6 @@ function handleRetry() {
   if (docId) {
     documentStore.fetchDocument(docId)
   }
-}
-
-function handleResolveComment(commentId: string) {
-  stubComments.value = stubComments.value.map((c) =>
-    c.commentId === commentId ? { ...c, resolved: true } : c,
-  )
 }
 
 const savingVersion = ref(false)
@@ -107,13 +77,6 @@ async function saveVersion() {
   }
 }
 
-function handleAddReply(commentId: string, text: string) {
-  stubComments.value = stubComments.value.map((c) =>
-    c.commentId === commentId
-      ? { ...c, replies: [...c.replies, { replyId: `r_${Date.now()}`, author: 'You', text, createdAt: new Date().toISOString() }] }
-      : c,
-  )
-}
 </script>
 
 <template>
@@ -281,9 +244,8 @@ function handleAddReply(commentId: string, text: string) {
         class="w-72 border-l border-primary/10 bg-surface flex flex-col overflow-hidden"
       >
         <CommentThreadPanel
-          :comments="stubComments"
-          @resolve="handleResolveComment"
-          @add-reply="handleAddReply"
+          :document-id="route.params.id as string"
+          @close="showComments = false"
         />
       </aside>
     </Transition>

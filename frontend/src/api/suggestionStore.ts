@@ -1,7 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Suggestion } from '@/types/document'
 import apiClient from '@/api/client'
+import type { Suggestion } from '@/types/document'
+
+export async function fetchSuggestions(documentId: string): Promise<Suggestion[]> {
+  const response = await apiClient.get(`/patches/${documentId}`)
+  const body = response.data as { data: { suggestions: Suggestion[] } }
+  return body.data?.suggestions || []
+}
 
 export const useSuggestionStore = defineStore('suggestion', () => {
   const suggestions = ref<Suggestion[]>([])
@@ -52,21 +58,31 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     }
   }
 
-  function acceptSuggestion(suggestionId: string) {
-    suggestions.value = suggestions.value.map((s) =>
-      s.suggestionId === suggestionId && s.status === 'pending'
-        ? { ...s, status: 'accepted' as const }
-        : s,
-    )
+  async function acceptSuggestion(suggestionId: string) {
+    try {
+      await apiClient.post(`/patches/${suggestionId}/accept`)
+      suggestions.value = suggestions.value.map((s) =>
+        s.suggestionId === suggestionId && s.status === 'pending'
+          ? { ...s, status: 'accepted' as const }
+          : s,
+      )
+    } catch (err) {
+      error.value = (err as any)?.message || 'Failed to accept'
+    }
     clampIndex()
   }
 
-  function rejectSuggestion(suggestionId: string) {
-    suggestions.value = suggestions.value.map((s) =>
-      s.suggestionId === suggestionId && s.status === 'pending'
-        ? { ...s, status: 'rejected' as const }
-        : s,
-    )
+  async function rejectSuggestion(suggestionId: string) {
+    try {
+      await apiClient.post(`/patches/${suggestionId}/reject`)
+      suggestions.value = suggestions.value.map((s) =>
+        s.suggestionId === suggestionId && s.status === 'pending'
+          ? { ...s, status: 'rejected' as const }
+          : s,
+      )
+    } catch (err) {
+      error.value = (err as any)?.message || 'Failed to reject'
+    }
     clampIndex()
   }
 
@@ -96,14 +112,14 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     }
   }
 
-  async function fetchSuggestions(documentId: string) {
+  async function loadSuggestions(documentId: string) {
     loading.value = true
-    error.value = null
     try {
-      const response = await apiClient.get(`/patches/${documentId}`)
-      setSuggestions(response.data as Suggestion[])
-    } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to fetch suggestions'
+      const items = await fetchSuggestions(documentId)
+      suggestions.value = items
+      activeIndex.value = 0
+    } catch (err) {
+      error.value = (err as any)?.message || 'Failed to load suggestions'
     } finally {
       loading.value = false
     }
@@ -135,7 +151,7 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     goPrev,
     loading,
     error,
-    fetchSuggestions,
+    loadSuggestions,
     reset,
   }
 })
