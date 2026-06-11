@@ -29,34 +29,53 @@ else
   echo "No alembic directory found. Skipping migrations."
 fi
 
-echo "Creating initial admin user..."
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+if [ -z "$ADMIN_PASSWORD" ]; then
+  echo "ERROR: ADMIN_PASSWORD env var must be set"
+  exit 1
+fi
+
+echo "Creating or updating admin user..."
 python -c "
-import asyncio
-from api.middleware.auth import create_access_token
+import asyncio, sys, os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import select
 from config.settings import get_settings
-from adapters.postgresql.models import Base, TenantModel, UserModel
+from adapters.postgresql.models import TenantModel, UserModel
+from passlib.hash import bcrypt
 
 async def init():
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
     async with async_sessionmaker(engine)() as session:
-        tenant = TenantModel(name='Default', slug='default')
-        session.add(tenant)
-        await session.flush()
-        from passlib.hash import bcrypt
-        user = UserModel(
-            email='admin@docforge.app',
-            hashed_password=bcrypt.hash('admin123'),
-            display_name='Admin',
-            tenant_id=tenant.id,
-            role='admin'
+        result = await session.execute(select(TenantModel).where(TenantModel.slug == 'default'))
+        tenant = result.scalar_one_or_none()
+        if not tenant:
+            tenant = TenantModel(name='Default', slug='default')
+            session.add(tenant)
+            await session.flush()
+
+        result = await session.execute(
+            select(UserModel).where(UserModel.email == 'admin@docforge.app')
         )
-        session.add(user)
+        user = result.scalar_one_or_none()
+        admin_password = os.environ.get('ADMIN_PASSWORD', '')
+        if user:
+            user.hashed_password = bcrypt.hash(admin_password)
+            print('Updated admin user password')
+        else:
+            user = UserModel(
+                email='admin@docforge.app',
+                hashed_password=bcrypt.hash(admin_password),
+                display_name='Admin',
+                tenant_id=tenant.id,
+                role='admin'
+            )
+            session.add(user)
+            print('Created admin user: admin@docforge.app')
         await session.commit()
-        print(f'Created admin user: admin@docforge.app / admin123')
 
 asyncio.run(init())
-" 2>/dev/null || echo "Admin user may already exist."
+" || echo "ERROR: Failed to create admin user" >&2
 
 echo "Database initialization complete."

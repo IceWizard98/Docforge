@@ -53,30 +53,33 @@ function buildState(
       const length = op.value?.length || 0
       if (length === 0) return
 
+      const from = op.fromPos ?? offset
+      const to = op.toPos ?? (op.type === 'insert' ? from : from + length)
+
       if (op.type === 'insert') {
         decorations.push(
-          Decoration.inline(offset, offset + length, {
+          Decoration.inline(from, to, {
             class: 'diff-insert',
             style: 'background-color: rgba(16, 185, 129, 0.15); border-bottom: 2px solid var(--color-cta);',
           }),
         )
       } else if (op.type === 'delete') {
         decorations.push(
-          Decoration.inline(offset, offset + length, {
+          Decoration.inline(from, to, {
             class: 'diff-delete',
             style: 'text-decoration: line-through; color: var(--color-danger); background-color: rgba(239, 68, 68, 0.1);',
           }),
         )
       } else if (op.type === 'replace') {
         decorations.push(
-          Decoration.inline(offset, offset + length, {
+          Decoration.inline(from, to, {
             class: 'diff-replace',
             style: 'text-decoration: underline wavy var(--color-warning); text-underline-offset: 3px; background-color: rgba(245, 158, 11, 0.1);',
           }),
         )
       }
 
-      offset += length
+      offset = Math.max(offset, to)
     })
   }
 

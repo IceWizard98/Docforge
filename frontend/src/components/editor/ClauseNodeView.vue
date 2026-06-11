@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { nodeViewProps, NodeViewWrapper, NodeViewContent } from '@tiptap/vue-3'
 import { CircleDot, GripVertical } from '@lucide/vue'
 
 const props = defineProps(nodeViewProps)
 
-const hasProvenance = props.node.attrs.provenance && props.node.attrs.provenance.length > 0
+const hasProvenance = computed(() => props.node.attrs.provenance && props.node.attrs.provenance.length > 0)
 </script>
 
 <template>

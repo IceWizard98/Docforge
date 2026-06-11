@@ -6,6 +6,8 @@ import DocumentOutline from './DocumentOutline.vue'
 import ChatDock from '@/components/chat/ChatDock.vue'
 import SuggestionReviewBar from '@/components/review/SuggestionReviewBar.vue'
 import DiffInspector from '@/components/review/DiffInspector.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { useEditorStore } from '@/stores/editorStore'
 import { useDocumentStore } from '@/stores/documentStore'
 import { PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Layers } from '@lucide/vue'
@@ -16,13 +18,15 @@ const documentStore = useDocumentStore()
 const editorRef = ref<InstanceType<typeof TiptapEditor> | null>(null)
 
 const mode = ref<'compose' | 'review' | 'diff'>(
-  (route.name as string)?.includes('review') ? 'review' : 'compose',
+  (route.name as string)?.includes('review') ? 'review' : (route.name as string)?.includes('diff') ? 'diff' : 'compose',
 )
 
 const showDiffInspector = ref(false)
 
 const isReviewMode = computed(() => mode.value === 'review')
 const isDiffMode = computed(() => mode.value === 'diff')
+
+const editorProp = computed(() => ({ value: editorRef.value?.editor || null }))
 
 onMounted(() => {
   const docId = route.params.id as string
@@ -31,8 +35,15 @@ onMounted(() => {
   }
 })
 
-function setMode(m: 'compose' | 'review') {
+function setMode(m: 'compose' | 'review' | 'diff') {
   mode.value = m
+}
+
+function handleRetry() {
+  const docId = route.params.id as string
+  if (docId) {
+    documentStore.fetchDocument(docId)
+  }
 }
 </script>
 
@@ -114,8 +125,21 @@ function setMode(m: 'compose' | 'review') {
         <h1 class="text-xl font-bold text-foreground">{{ documentStore.title }}</h1>
       </div>
 
+      <!-- Loading -->
+      <div v-if="documentStore.loading && !documentStore.title" class="flex-1 flex items-center justify-center">
+        <LoadingSpinner />
+      </div>
+
+      <!-- Error -->
+      <ErrorMessage
+        v-if="documentStore.error && !documentStore.loading"
+        :message="documentStore.error"
+        retry-label="Riprova"
+        @retry="handleRetry"
+      />
+
       <!-- Editor -->
-      <div class="flex-1 overflow-y-auto bg-surface/40">
+      <div v-else class="flex-1 overflow-y-auto bg-surface/40">
         <div class="max-w-3xl mx-auto py-8">
           <div class="bg-white rounded-lg shadow-sm border border-primary/10">
             <TiptapEditor ref="editorRef" />
@@ -144,7 +168,7 @@ function setMode(m: 'compose' | 'review') {
         class="w-72 border-l border-primary/10 bg-surface flex flex-col overflow-hidden"
       >
         <ChatDock
-          :editor="{ value: editorRef?.editor || null }"
+          :editor="editorProp"
           :document-id="route.params.id as string"
         />
       </aside>

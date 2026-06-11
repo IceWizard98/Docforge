@@ -87,12 +87,14 @@ export interface DiffOperation {
   value?: string
   originalText?: string
   newText?: string
+  fromPos?: number
+  toPos?: number
 }
 
 export interface DiffSummary {
-  sectionsAdded: number
-  sectionsRemoved: number
-  sectionsModified: number
+  wordsAdded: number
+  wordsRemoved: number
+  wordsModified: number
   wordsChanged: number
   operations: DiffOperation[]
 }
@@ -134,7 +136,7 @@ export interface EditorContext {
   activeSectionId: string | null
   activeClauseId: string | null
   selectedText: string | null
-  mode: 'compose' | 'review' | 'diff'
+  mode: 'compose' | 'review'
   cursorPosition: { from: number; to: number } | null
   visibleSections: string[]
   documentVersion: number

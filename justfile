@@ -12,7 +12,13 @@ dev-frontend:
 dev-db:
     docker compose up -d postgres redis minio
 
-dev: dev-db dev-api dev-worker dev-frontend
+dev:
+    @echo "Starting all dev services..."
+    just dev-db &
+    just dev-api &
+    just dev-worker &
+    just dev-frontend
+    trap 'kill 0' SIGINT SIGTERM
 
 # Scripts
 scripts-dev:
@@ -83,7 +89,7 @@ clean:
 
 # Initialize
 init:
-    cp .env.example .env
+    cp -n .env.example .env 2>/dev/null || echo '.env exists, skipping'
     cd backend && python -m venv venv
     cd backend && . venv/bin/activate && pip install -r requirements.txt
     cd frontend && npm install
@@ -93,4 +99,4 @@ init:
 
 # Seed
 seed:
-    cd backend && python scripts/seed-data.py || ./infra/scripts/seed-data.sh
+    cd backend && python scripts/seed-data.py

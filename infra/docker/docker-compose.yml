@@ -1,6 +1,8 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    # TODO: Move POSTGRES_USER/PASSWORD to .env file for production
     environment:
       POSTGRES_USER: docforge
       POSTGRES_PASSWORD: docforge
@@ -19,6 +21,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -31,10 +34,12 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
+    # TODO: Move MINIO_ROOT_USER/PASSWORD to .env file for production
     environment:
       MINIO_ROOT_USER: docforge
       MINIO_ROOT_PASSWORD: docforge123
@@ -52,6 +57,7 @@ services:
     build:
       context: ../../backend
       dockerfile: ../infra/docker/Dockerfile.api
+    restart: unless-stopped
     ports:
       - "8000:8000"
     env_file: ../../.env
@@ -62,6 +68,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # DEV: bind-mount mounts host code over built image for hot reload
     volumes:
       - ../../backend:/app
     networks:
@@ -77,6 +84,7 @@ services:
     build:
       context: ../../backend
       dockerfile: ../infra/docker/Dockerfile.worker
+    restart: unless-stopped
     env_file: ../../.env
     depends_on:
       postgres:
@@ -100,6 +108,8 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.frontend
+    restart: unless-stopped
+    # Port 5173 maps to nginx port 80 internally
     ports:
       - "5173:80"
     depends_on:

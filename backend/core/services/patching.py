@@ -106,9 +106,8 @@ class PatchService:
                                     ptr = ptr.get(key, {})
                             if isinstance(ptr, dict):
                                 ptr[target_path[-1]] = op.get("content")
-                        else:
-                            if isinstance(op.get("content"), dict):
-                                s.update(op["content"])
+                        elif isinstance(op.get("content"), dict):
+                            s.update(op["content"])
                         break
             elif op_type == "delete":
                 sections[:] = [s for s in sections if s.get("section_id") != target_section]

@@ -12,6 +12,7 @@ const router = useRouter()
 const documents = ref<DocumentResponse[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
+const creating = ref(false)
 
 async function fetchDocs() {
   loading.value = true
@@ -30,16 +31,21 @@ function navigateToDoc(id: string) {
 }
 
 async function createNew() {
+  if (creating.value) return
+  creating.value = true
   try {
     const doc = await createDocument('Nuovo documento')
     router.push(`/documents/${doc.id}`)
   } catch (e: any) {
     error.value = e?.response?.data?.detail || e.message || 'Creazione fallita'
+  } finally {
+    creating.value = false
   }
 }
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return '—'
   return d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
 }
 

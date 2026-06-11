@@ -13,7 +13,7 @@ class PgvectorAdapter:
     async def store_embeddings(
         self, chunks: list[dict], embeddings: list[list[float]]
     ) -> None:
-        for chunk, embedding in zip(chunks, embeddings):
+        for chunk, embedding in zip(chunks, embeddings, strict=False):
             embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
             await self.session.execute(
                 text(

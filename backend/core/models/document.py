@@ -1,11 +1,10 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional
+from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import uuid4
 
 
-class DocumentStatus(str, Enum):
+class DocumentStatus(StrEnum):
     DRAFT = "draft"
     IN_REVIEW = "in_review"
     CHANGES_REQUESTED = "changes_requested"
@@ -13,7 +12,7 @@ class DocumentStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class SectionStatus(str, Enum):
+class SectionStatus(StrEnum):
     DRAFT = "draft"
     APPROVED = "approved"
     PENDING = "pending"
@@ -39,8 +38,8 @@ class OutlineEntry:
 class ProvenanceLink:
     section_id: str
     source_doc_id: str
-    chunk_id: Optional[str] = None
-    clause_id: Optional[str] = None
+    chunk_id: str | None = None
+    clause_id: str | None = None
     confidence: float = 0.0
     generated_by: str = "ai"
 
@@ -49,21 +48,21 @@ class ProvenanceLink:
 class Document:
     doc_id: str = field(default_factory=lambda: f"d_{uuid4().hex[:8]}")
     tenant_id: str = ""
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
     title: str = ""
     doc_type: str = ""
     status: DocumentStatus = DocumentStatus.DRAFT
     language: str = "it"
-    jurisdiction: Optional[str] = None
+    jurisdiction: str | None = None
     version: int = 1
-    meta: Optional[DocumentMeta] = None
+    meta: DocumentMeta | None = None
     outline: list[OutlineEntry] = field(default_factory=list)
     content: dict = field(default_factory=dict)
     provenance: list[ProvenanceLink] = field(default_factory=list)
     source_doc_ids: list[str] = field(default_factory=list)
     created_by: str = ""
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -73,7 +72,7 @@ class DocumentVersion:
     version_number: int = 1
     content: dict = field(default_factory=dict)
     checksum: str = ""
-    change_summary: Optional[str] = None
+    change_summary: str | None = None
     status: str = "draft"
     created_by: str = ""
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

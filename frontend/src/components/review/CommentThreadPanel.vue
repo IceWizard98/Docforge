@@ -15,6 +15,7 @@ const emit = defineEmits<{
 
 const showResolved = ref(false)
 const replyTexts = ref<Record<string, string>>({})
+const submittingReply = ref(false)
 
 const activeComments = computed(() => props.comments.filter((c) => !c.resolved))
 const resolvedComments = computed(() => props.comments.filter((c) => c.resolved))
@@ -23,11 +24,16 @@ function toggleShowResolved() {
   showResolved.value = !showResolved.value
 }
 
-function handleAddReply(commentId: string) {
+async function handleAddReply(commentId: string) {
   const text = replyTexts.value[commentId]?.trim()
-  if (!text) return
-  emit('addReply', commentId, text)
-  replyTexts.value[commentId] = ''
+  if (!text || submittingReply.value) return
+  submittingReply.value = true
+  try {
+    emit('addReply', commentId, text)
+    replyTexts.value[commentId] = ''
+  } finally {
+    submittingReply.value = false
+  }
 }
 </script>
 

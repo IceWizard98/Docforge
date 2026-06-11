@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { useDocumentStore } from '@/stores/documentStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { FileText, ChevronRight } from '@lucide/vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import ErrorMessage from '@/components/common/ErrorMessage.vue'
 
 const documentStore = useDocumentStore()
 const editorStore = useEditorStore()
@@ -37,20 +39,13 @@ function goToSection(sectionId: string) {
     <!-- Sections list -->
     <div class="flex-1 overflow-y-auto">
       <!-- Loading state -->
-      <div
-        v-if="documentStore.loading"
-        class="flex items-center justify-center h-24"
-      >
-        <span class="text-sm text-foreground/40">Loading...</span>
-      </div>
+      <LoadingSpinner v-if="documentStore.loading" class="h-24" />
 
       <!-- Error state -->
-      <div
+      <ErrorMessage
         v-if="documentStore.error"
-        class="p-4"
-      >
-        <p class="text-sm text-danger">{{ documentStore.error }}</p>
-      </div>
+        :message="documentStore.error"
+      />
 
       <!-- Empty state -->
       <div

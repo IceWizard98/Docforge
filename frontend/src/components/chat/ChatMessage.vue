@@ -49,8 +49,8 @@ function handleAction(action: ChatActionPayload) {
       <!-- Action buttons -->
       <div v-if="hasActions" class="flex flex-wrap gap-2 mt-2">
         <button
-          v-for="act in message.actions"
-          :key="act.type"
+          v-for="(act, idx) in message.actions"
+          :key="'action_' + idx"
           class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/15 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           @click="handleAction(act)"
         >

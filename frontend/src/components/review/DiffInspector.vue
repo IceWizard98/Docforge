@@ -12,9 +12,12 @@ const hasDiff = computed(() => props.summary !== null && props.summary.operation
 
 const impactBadge = computed(() => {
   if (!props.summary) return { class: 'text-foreground/40 bg-foreground/5', label: 'None' }
-  const count = props.summary.wordsChanged
-  if (count > 100) return { class: 'text-danger bg-danger/10', label: 'High' }
-  if (count > 20) return { class: 'text-warning bg-warning/10', label: 'Medium' }
+  const ops = props.summary.operations
+  const structuralChanges = ops.filter((o) => o.type === 'replace' && (o.originalText?.startsWith('#') || o.newText?.startsWith('#'))).length
+  const wordCount = props.summary.wordsChanged
+  const score = wordCount + structuralChanges * 50
+  if (score > 100) return { class: 'text-danger bg-danger/10', label: 'High' }
+  if (score > 20) return { class: 'text-warning bg-warning/10', label: 'Medium' }
   return { class: 'text-cta bg-cta/10', label: 'Low' }
 })
 
@@ -52,24 +55,24 @@ const nonEqualOps = computed(() => {
             </span>
           </div>
           <div class="flex items-center justify-between">
-            <span class="text-xs text-foreground/50">Sections added</span>
+            <span class="text-xs text-foreground/50">Words added</span>
             <span class="text-xs font-medium flex items-center gap-1 text-cta">
               <Plus class="w-3 h-3" />
-              {{ summary.sectionsAdded }}
+              {{ summary.wordsAdded }}
             </span>
           </div>
           <div class="flex items-center justify-between">
-            <span class="text-xs text-foreground/50">Sections removed</span>
+            <span class="text-xs text-foreground/50">Words removed</span>
             <span class="text-xs font-medium flex items-center gap-1 text-danger">
               <Minus class="w-3 h-3" />
-              {{ summary.sectionsRemoved }}
+              {{ summary.wordsRemoved }}
             </span>
           </div>
           <div class="flex items-center justify-between">
-            <span class="text-xs text-foreground/50">Sections modified</span>
+            <span class="text-xs text-foreground/50">Words modified</span>
             <span class="text-xs font-medium flex items-center gap-1 text-warning">
               <Edit3 class="w-3 h-3" />
-              {{ summary.sectionsModified }}
+              {{ summary.wordsModified }}
             </span>
           </div>
           <div class="flex items-center justify-between">

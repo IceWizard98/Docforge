@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import axios from 'axios'
+import apiClient from '@/api/client'
 
 export interface SectionInfo {
   id: string
@@ -26,7 +26,7 @@ export const useDocumentStore = defineStore('document', () => {
     currentDocId.value = id
 
     try {
-      const response = await axios.get(`/api/documents/${id}`)
+      const response = await apiClient.get(`/api/documents/${id}`)
       const data = response.data
       title.value = data.title || ''
       status.value = data.status || 'draft'
@@ -46,9 +46,10 @@ export const useDocumentStore = defineStore('document', () => {
 
   async function updateTitle(newTitle: string) {
     if (!currentDocId.value) return
+    error.value = null
 
     try {
-      await axios.patch(`/api/documents/${currentDocId.value}`, { title: newTitle })
+      await apiClient.patch(`/api/documents/${currentDocId.value}`, { title: newTitle })
       title.value = newTitle
     } catch (e: any) {
       error.value = e?.response?.data?.detail || e.message || 'Failed to update title'
@@ -57,9 +58,10 @@ export const useDocumentStore = defineStore('document', () => {
 
   async function updateSectionStatus(sectionId: string, newStatus: string) {
     if (!currentDocId.value) return
+    error.value = null
 
     try {
-      await axios.patch(`/api/documents/${currentDocId.value}/sections/${sectionId}`, {
+      await apiClient.patch(`/api/documents/${currentDocId.value}/sections/${sectionId}`, {
         status: newStatus,
       })
       const idx = sections.value.findIndex((s) => s.id === sectionId)

@@ -24,38 +24,56 @@ export function useChatStream() {
   const MAX_RETRIES = 5
   const BASE_DELAY = 1000
 
+  function safeParse(data: string) {
+    try {
+      return JSON.parse(data)
+    } catch {
+      return null
+    }
+  }
+
   function connect(url: string, handlers: StreamEventHandlers = {}) {
     disconnect()
 
     isStreaming.value = true
     streamError.value = null
 
-    eventSource = new EventSource(url)
+    eventSource = new EventSource(url, { withCredentials: true })
 
     eventSource.addEventListener('message_chunk', (e: MessageEvent) => {
-      const data = JSON.parse(e.data)
+      const data = safeParse(e.data)
+      if (!data) {
+        handlers.onError?.(`Malformed chunk: ${e.data}`)
+        return
+      }
       handlers.onMessageChunk?.(data.content)
     })
 
     eventSource.addEventListener('action_proposed', (e: MessageEvent) => {
-      const action = JSON.parse(e.data) as ChatActionPayload
+      const data = safeParse(e.data)
+      if (!data) return
+      const action = data as ChatActionPayload
       actions.value.push(action)
       handlers.onActionProposed?.(action)
     })
 
     eventSource.addEventListener('section_generated', (e: MessageEvent) => {
-      const data = JSON.parse(e.data)
+      const data = safeParse(e.data)
+      if (!data) return
       handlers.onSectionGenerated?.(data)
     })
 
     eventSource.addEventListener('patch_proposed', (e: MessageEvent) => {
-      const patch = JSON.parse(e.data) as PatchPayload
+      const data = safeParse(e.data)
+      if (!data) return
+      const patch = data as PatchPayload
       patches.value.push(patch)
       handlers.onPatchProposed?.(patch)
     })
 
     eventSource.addEventListener('progress', (e: MessageEvent) => {
-      const data = JSON.parse(e.data)
+      const data = safeParse(e.data)
+      if (!data) return
       handlers.onProgress?.(data)
     })
 
@@ -63,14 +81,6 @@ export function useChatStream() {
       isStreaming.value = false
       retryCount = 0
       handlers.onDone?.()
-    })
-
-    eventSource.addEventListener('error', (e: MessageEvent) => {
-      if (e.data) {
-        const data = JSON.parse(e.data)
-        streamError.value = data.error || 'Stream error'
-        handlers.onError?.(data.error || 'Stream error')
-      }
     })
 
     eventSource.onerror = () => {

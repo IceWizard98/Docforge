@@ -10,3 +10,7 @@ __pycache__/
 .env.local
 frontend/dist/
 backend/adapters/postgresql/migrations/versions/*.pyc
+*.log
+.DS_Store
+*.egg-info/
+*.egg/

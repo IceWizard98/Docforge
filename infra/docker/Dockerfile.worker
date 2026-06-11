@@ -7,6 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system --gid 1001 appuser && \
     adduser --system --uid 1001 --gid 1001 appuser
 
@@ -21,4 +24,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 USER appuser
 
-CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD celery -A workers.celery_app inspect ping --timeout=5 || exit 1
+
+CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--without-gossip", "--without-mingle", "--without-heartbeat", "--max-memory-per-child=50000", "--concurrency=4"]

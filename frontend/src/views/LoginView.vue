@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/api/authStore'
 import { Loader2 } from '@lucide/vue'
+import axios from 'axios'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const email = ref('')
@@ -12,17 +14,27 @@ const password = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const emailValid = computed(() => emailPattern.test(email.value.trim()))
+
 async function handleSubmit() {
-  if (!email.value.trim() || !password.value.trim()) return
+  if (!email.value.trim() || !password.value.trim() || !emailValid.value) return
 
   loading.value = true
   error.value = null
 
   try {
     await authStore.login(email.value, password.value)
-    router.push('/workspace/default')
-  } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Credenziali non valide'
+    const redirect = (route.query.redirect as string) || '/workspace/default'
+    router.push(redirect)
+  } catch (e: unknown) {
+    if (axios.isAxiosError(e)) {
+      error.value = e.response?.data?.detail || e.message || 'Credenziali non valide'
+    } else if (e instanceof Error) {
+      error.value = e.message
+    } else {
+      error.value = 'Credenziali non valide'
+    }
   } finally {
     loading.value = false
   }

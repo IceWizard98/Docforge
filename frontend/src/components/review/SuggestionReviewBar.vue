@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useSuggestionStore } from '@/api/suggestionStore'
-import { Check, X, ChevronLeft, ChevronRight, CheckCheck, XCircle } from '@lucide/vue'
+import apiClient from '@/api/client'
+import { Check, X, ChevronLeft, ChevronRight, CheckCheck, XCircle, Loader2 } from '@lucide/vue'
 
 const suggestionStore = useSuggestionStore()
+const persisting = ref<Set<string>>(new Set())
 
 const hasSuggestions = computed(() => suggestionStore.totalCount > 0)
 const hasPending = computed(() => suggestionStore.pendingCount > 0)
@@ -22,6 +24,47 @@ const suggestionTypeLabel = computed(() => {
       return 'Suggestion'
   }
 })
+
+async function persistDecision(suggestionId: string, decision: 'accepted' | 'rejected') {
+  persisting.value.add(suggestionId)
+  try {
+    await apiClient.patch(`/api/suggestions/${suggestionId}`, { status: decision })
+    if (decision === 'accepted') {
+      suggestionStore.acceptSuggestion(suggestionId)
+    } else {
+      suggestionStore.rejectSuggestion(suggestionId)
+    }
+  } catch {
+  } finally {
+    persisting.value.delete(suggestionId)
+  }
+}
+
+async function persistAll(decision: 'accepted' | 'rejected') {
+  for (const s of suggestionStore.pendingSuggestions) {
+    await persistDecision(s.suggestionId, decision)
+  }
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (!hasPending.value || !suggestionStore.currentSuggestion) return
+  if (e.key === 'ArrowLeft') {
+    suggestionStore.goPrev()
+    e.preventDefault()
+  } else if (e.key === 'ArrowRight') {
+    suggestionStore.goNext()
+    e.preventDefault()
+  } else if (e.key === 'Enter') {
+    persistDecision(suggestionStore.currentSuggestion.suggestionId, 'accepted')
+    e.preventDefault()
+  } else if (e.key === 'Delete' || e.key === 'Escape') {
+    persistDecision(suggestionStore.currentSuggestion.suggestionId, 'rejected')
+    e.preventDefault()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleKeydown))
 </script>
 
 <template>
@@ -40,7 +83,7 @@ const suggestionTypeLabel = computed(() => {
     <button
       v-if="hasPending"
       class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md bg-cta/10 text-cta hover:bg-cta/15 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-      @click="suggestionStore.acceptAll()"
+      @click="persistAll('accepted')"
     >
       <CheckCheck class="w-3 h-3" />
       Accept All
@@ -48,7 +91,7 @@ const suggestionTypeLabel = computed(() => {
     <button
       v-if="hasPending"
       class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md bg-danger/10 text-danger hover:bg-danger/15 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-      @click="suggestionStore.rejectAll()"
+      @click="persistAll('rejected')"
     >
       <XCircle class="w-3 h-3" />
       Reject All
@@ -63,16 +106,19 @@ const suggestionTypeLabel = computed(() => {
 
       <!-- Individual accept/reject -->
       <button
-        class="p-1 rounded-md text-cta hover:bg-cta/10 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+        class="p-1 rounded-md text-cta hover:bg-cta/10 transition-colors duration-150 disabled:opacity-50 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
         title="Accept"
-        @click="suggestionStore.acceptSuggestion(suggestionStore.currentSuggestion!.suggestionId)"
+        :disabled="persisting.has(suggestionStore.currentSuggestion.suggestionId)"
+        @click="persistDecision(suggestionStore.currentSuggestion!.suggestionId, 'accepted')"
       >
-        <Check class="w-3.5 h-3.5" />
+        <Loader2 v-if="persisting.has(suggestionStore.currentSuggestion.suggestionId)" class="w-3.5 h-3.5 animate-spin" />
+        <Check v-else class="w-3.5 h-3.5" />
       </button>
       <button
-        class="p-1 rounded-md text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+        class="p-1 rounded-md text-danger hover:bg-danger/10 transition-colors duration-150 disabled:opacity-50 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
         title="Reject"
-        @click="suggestionStore.rejectSuggestion(suggestionStore.currentSuggestion!.suggestionId)"
+        :disabled="persisting.has(suggestionStore.currentSuggestion.suggestionId)"
+        @click="persistDecision(suggestionStore.currentSuggestion!.suggestionId, 'rejected')"
       >
         <X class="w-3.5 h-3.5" />
       </button>

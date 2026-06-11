@@ -40,34 +40,45 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     suggestions.value.push(s)
   }
 
-  function acceptSuggestion(suggestionId: string) {
-    const found = suggestions.value.find((s) => s.suggestionId === suggestionId)
-    if (found) {
-      found.status = 'accepted'
+  function clampIndex() {
+    const len = pendingSuggestions.value.length
+    if (len === 0) {
+      activeIndex.value = 0
+    } else if (activeIndex.value >= len) {
+      activeIndex.value = len - 1
     }
+  }
+
+  function acceptSuggestion(suggestionId: string) {
+    suggestions.value = suggestions.value.map((s) =>
+      s.suggestionId === suggestionId && s.status === 'pending'
+        ? { ...s, status: 'accepted' as const }
+        : s,
+    )
+    clampIndex()
   }
 
   function rejectSuggestion(suggestionId: string) {
-    const found = suggestions.value.find((s) => s.suggestionId === suggestionId)
-    if (found) {
-      found.status = 'rejected'
-    }
+    suggestions.value = suggestions.value.map((s) =>
+      s.suggestionId === suggestionId && s.status === 'pending'
+        ? { ...s, status: 'rejected' as const }
+        : s,
+    )
+    clampIndex()
   }
 
   function acceptAll() {
-    suggestions.value.forEach((s) => {
-      if (s.status === 'pending') {
-        s.status = 'accepted'
-      }
-    })
+    suggestions.value = suggestions.value.map((s) =>
+      s.status === 'pending' ? { ...s, status: 'accepted' as const } : s,
+    )
+    clampIndex()
   }
 
   function rejectAll() {
-    suggestions.value.forEach((s) => {
-      if (s.status === 'pending') {
-        s.status = 'rejected'
-      }
-    })
+    suggestions.value = suggestions.value.map((s) =>
+      s.status === 'pending' ? { ...s, status: 'rejected' as const } : s,
+    )
+    clampIndex()
   }
 
   function goNext() {

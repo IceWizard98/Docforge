@@ -8,9 +8,14 @@ env:
   REGISTRY: ghcr.io
   IMAGE_TAG: ${{ github.sha }}
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       packages: write

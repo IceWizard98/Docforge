@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/api/authStore'
 import { Loader2 } from '@lucide/vue'
+import axios from 'axios'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -14,22 +15,36 @@ const tenantSlug = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const emailValid = computed(() => emailPattern.test(email.value.trim()))
+
+function sanitizeSlug(val: string): string {
+  return val.trim().replace(/[^a-zA-Z0-9-]/g, '').toLowerCase()
+}
+
 async function handleSubmit() {
-  if (!email.value.trim() || !password.value.trim() || !displayName.value.trim()) return
+  if (!email.value.trim() || !password.value.trim() || !displayName.value.trim() || !emailValid.value) return
 
   loading.value = true
   error.value = null
 
   try {
+    const slug = tenantSlug.value ? sanitizeSlug(tenantSlug.value) : 'default'
     await authStore.register(
       email.value,
       password.value,
       displayName.value,
-      tenantSlug.value || 'default',
+      slug,
     )
     router.push('/workspace/default')
-  } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Registrazione fallita'
+  } catch (e: unknown) {
+    if (axios.isAxiosError(e)) {
+      error.value = e.response?.data?.detail || e.message || 'Registrazione fallita'
+    } else if (e instanceof Error) {
+      error.value = e.message
+    } else {
+      error.value = 'Registrazione fallita'
+    }
   } finally {
     loading.value = false
   }

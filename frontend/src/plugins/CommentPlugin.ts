@@ -11,7 +11,14 @@ export interface CommentWidget {
   to: number
 }
 
-export function CommentPlugin(comments: CommentWidget[] = []): Plugin {
+export interface CommentPluginOptions {
+  comments?: CommentWidget[]
+  onClick?: (commentId: string, threadId: string) => void
+}
+
+export function CommentPlugin(options: CommentPluginOptions = {}): Plugin {
+  const { comments = [], onClick } = options
+
   return new Plugin({
     key: commentPluginKey,
 
@@ -39,12 +46,20 @@ export function CommentPlugin(comments: CommentWidget[] = []): Plugin {
         const pluginState = commentPluginKey.getState(state) as DecorationSet | undefined
         if (!pluginState) return false
 
-        let found = false
-        pluginState.find(pos, pos).forEach(() => {
-          found = true
-        })
-
-        return found
+        const foundDecos = pluginState.find(pos, pos)
+        if (foundDecos.length > 0 && onClick) {
+          const dom = view.domAtPos(pos)
+          if (dom.node) {
+            const el = dom.node.nodeType === 3 ? dom.node.parentElement : dom.node as HTMLElement
+            const commentId = el?.getAttribute('data-comment-id')
+            const threadId = el?.getAttribute('data-thread-id')
+            if (commentId) {
+              onClick(commentId, threadId || '')
+              return true
+            }
+          }
+        }
+        return foundDecos.length > 0
       },
     },
   })

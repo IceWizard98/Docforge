@@ -1,6 +1,6 @@
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
@@ -45,7 +45,7 @@ def _check_rate_limit(ip: str, max_attempts: int = 5, window_seconds: int = 60) 
 def create_access_token(data: dict) -> str:
     settings = get_settings()
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expiration_minutes)
     to_encode.update({"exp": expire, "token_type": "access"})
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
@@ -53,7 +53,7 @@ def create_access_token(data: dict) -> str:
 def create_refresh_token(data: dict) -> str:
     settings = get_settings()
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(days=30)
+    expire = datetime.now(UTC) + timedelta(days=30)
     to_encode.update({"exp": expire, "token_type": "refresh"})
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
@@ -145,7 +145,7 @@ async def login(
             detail="Invalid email or password",
         )
 
-    user_model.last_login_at = datetime.now(timezone.utc)
+    user_model.last_login_at = datetime.now(UTC)
     await session.flush()
 
     access_token = create_access_token({

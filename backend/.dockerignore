@@ -13,3 +13,6 @@ venv/
 docker-compose*.yml
 Dockerfile*
 README.md
+.mypy_cache/
+.coverage
+htmlcov/

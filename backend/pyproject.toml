@@ -3,21 +3,44 @@ name = "docforge-backend"
 version = "0.1.0"
 description = "DocForge API Backend"
 requires-python = ">=3.12"
+authors = [{ name = "DocForge Team" }]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["E", "F", "I", "W", "B", "SIM", "UP", "ARG", "T20", "S", "PL", "PT", "N"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "PLR2004", "B008", "PLC0415", "ARG", "S311"]
+"workers/*" = ["PLC0415", "ARG"]
+"api/*" = ["B008", "PLC0415", "S105", "B904", "ARG"]
+"config/*" = ["B008", "S105"]
+"core/*" = ["PLC0415", "PLR2004", "S311", "ARG", "S105", "UP042", "S110"]
+"adapters/postgresql/base.py" = ["B008"]
+"adapters/*" = ["PLC0415", "ARG", "PLR2004", "S311", "B904"]
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-v --tb=short --strict-markers"
 
 [tool.mypy]
 python_version = "3.12"
-strict = false
+strict = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["venv", "migrations"]

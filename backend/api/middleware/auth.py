@@ -79,7 +79,7 @@ async def get_current_user(
 
 def require_role(required_role: str):
     def role_checker(current_user: AuthUser = Depends(get_current_user)) -> AuthUser:
-        if current_user.role != required_role and current_user.role != "admin":
+        if current_user.role not in (required_role, "admin"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Role '{required_role}' required",

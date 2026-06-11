@@ -36,9 +36,9 @@ export function useDocumentDiff() {
       .reduce((sum, o) => sum + (o.value?.split(/\s+/).filter(Boolean).length || 0), 0)
 
     return {
-      sectionsAdded: inserts,
-      sectionsRemoved: deletes,
-      sectionsModified: replaces,
+      wordsAdded: inserts,
+      wordsRemoved: deletes,
+      wordsModified: replaces,
       wordsChanged,
       operations: ops,
     }

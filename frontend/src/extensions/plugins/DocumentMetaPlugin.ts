@@ -24,27 +24,25 @@ const DEFAULT_META: DocumentMeta = {
 function extractMetaFromDoc(doc: PMNode): DocumentMeta {
   const meta = { ...DEFAULT_META }
 
-  doc.content.forEach((node: PMNode) => {
-    if (node.type.name === 'paragraph') {
-      const text = node.textContent || ''
-      if (text) {
-        meta.title = text
-      }
-      const statusAttr = node.attrs.status
-      if (statusAttr) {
-        meta.status = statusAttr
-      }
-      const versionAttr = node.attrs.version
-      if (versionAttr != null) {
-        meta.version = Number(versionAttr)
-      }
-      const docTypeAttr = node.attrs.docType
-      if (docTypeAttr) {
-        meta.docType = docTypeAttr
-      }
-      return { break: true }
+  const firstSection = doc.content.content.find((node: PMNode) => node.type.name === 'section')
+  if (firstSection) {
+    const text = firstSection.textContent || ''
+    if (text) {
+      meta.title = text
     }
-  })
+    const statusAttr = firstSection.attrs.status
+    if (statusAttr) {
+      meta.status = statusAttr
+    }
+    const versionAttr = firstSection.attrs.version
+    if (versionAttr != null) {
+      meta.version = Number(versionAttr)
+    }
+    const docTypeAttr = firstSection.attrs.docType
+    if (docTypeAttr) {
+      meta.docType = docTypeAttr
+    }
+  }
 
   return meta
 }

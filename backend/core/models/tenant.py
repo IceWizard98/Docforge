@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import uuid4
 
 
-class UserRole(str, Enum):
+class UserRole(StrEnum):
     ADMIN = "admin"
     EDITOR = "editor"
     REVIEWER = "reviewer"
@@ -18,7 +18,7 @@ class Tenant:
     slug: str = ""
     config: dict = field(default_factory=dict)
     status: str = "active"
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -29,4 +29,4 @@ class User:
     display_name: str = ""
     role: UserRole = UserRole.EDITOR
     settings: dict = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

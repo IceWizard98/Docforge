@@ -8,9 +8,9 @@ export const useEditorStore = defineStore('editor', () => {
   const showAssistant = ref(true)
   const selectedText = ref<string | null>(null)
 
-  const isExpanded = computed(() => (id: string) => {
+  function isExpanded(id: string): boolean {
     return expandedSections.value.has(id)
-  })
+  }
 
   function toggleSection(id: string) {
     const newSet = new Set(expandedSections.value)

@@ -21,6 +21,7 @@ const props = defineProps<{
 const inputText = ref('')
 const messagesEndRef = ref<HTMLElement | null>(null)
 const sessionId = ref<string | null>(null)
+const sessionLoading = ref(false)
 
 const { context } = useEditorContext(props.editor)
 const {
@@ -28,6 +29,7 @@ const {
   isStreaming,
   streamError,
   actions,
+  patches,
   connect,
   disconnect,
   addMessage,
@@ -39,9 +41,31 @@ watch(messages, async () => {
   messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
 })
 
+async function ensureSession() {
+  if (sessionId.value) return sessionId.value
+  sessionLoading.value = true
+  try {
+    const session = await createChatSession(props.documentId)
+    sessionId.value = session.id
+    connect(getStreamUrl(session.id), {
+      onMessageChunk: (chunk) => {
+        messages.value = messages.value.map((msg, idx) => {
+          if (idx === messages.value.length - 1 && msg.role === 'assistant') {
+            return { ...msg, content: msg.content + chunk }
+          }
+          return msg
+        })
+      },
+    })
+    return session.id
+  } finally {
+    sessionLoading.value = false
+  }
+}
+
 async function send() {
   const text = inputText.value.trim()
-  if (!text || isStreaming.value) return
+  if (!text || isStreaming.value || sessionLoading.value) return
 
   inputText.value = ''
 
@@ -56,12 +80,10 @@ async function send() {
   messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
 
   try {
-    if (!sessionId.value) {
-      const session = await createChatSession(props.documentId)
-      sessionId.value = session.id
-    }
+    const sid = await ensureSession()
+    if (!sid) return
 
-    const response = await sendMessage(sessionId.value, text, context.value)
+    const response = await sendMessage(sid, text, context.value)
 
     if (response.role === 'assistant') {
       addMessage({
@@ -74,22 +96,15 @@ async function send() {
         timestamp: response.timestamp,
       })
     }
-
-    connect(getStreamUrl(sessionId.value), {
-      onMessageChunk: (chunk) => {
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg && lastMsg.role === 'assistant') {
-          lastMsg.content += chunk
-        }
-      },
-    })
   } catch (err: any) {
     streamError.value = err?.response?.data?.detail || err.message || 'Failed to send message'
   }
 }
 
 function handleAction(action: ChatActionPayload) {
-  inputText.value = `Apply action: ${action.label}`
+  if (!sessionId.value) return
+  const description = typeof action.payload?.description === 'string' ? action.payload.description : `Apply action: ${action.label}`
+  sendMessage(sessionId.value, description, context.value).catch(() => {})
 }
 
 function handleRetry() {

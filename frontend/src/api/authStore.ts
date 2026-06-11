@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import router from '@/router'
 import apiClient, { login as apiLogin, register as apiRegister } from './client'
 import type { AuthResponse } from './client'
 
@@ -11,11 +12,18 @@ interface User {
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('auth_token'))
-  const currentUser = ref<User | null>(
-    localStorage.getItem('auth_user')
-      ? JSON.parse(localStorage.getItem('auth_user')!)
-      : null,
-  )
+
+  let parsedUser: User | null = null
+  const userStr = localStorage.getItem('auth_user')
+  if (userStr) {
+    try {
+      parsedUser = JSON.parse(userStr)
+    } catch {
+      localStorage.removeItem('auth_user')
+      parsedUser = null
+    }
+  }
+  const currentUser = ref<User | null>(parsedUser)
 
   const isAuthenticated = computed(() => !!token.value)
 
@@ -32,6 +40,7 @@ export const useAuthStore = defineStore('auth', () => {
     currentUser.value = null
     localStorage.removeItem('auth_token')
     localStorage.removeItem('auth_user')
+    localStorage.removeItem('refresh_token')
     delete apiClient.defaults.headers.Authorization
   }
 
@@ -54,7 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   function logout() {
     clearAuth()
-    window.location.href = '/login'
+    router.push('/login')
   }
 
   function checkToken() {
@@ -64,7 +73,12 @@ export const useAuthStore = defineStore('auth', () => {
       apiClient.defaults.headers.Authorization = `Bearer ${stored}`
       const userData = localStorage.getItem('auth_user')
       if (userData) {
-        currentUser.value = JSON.parse(userData)
+        try {
+          currentUser.value = JSON.parse(userData)
+        } catch {
+          localStorage.removeItem('auth_user')
+          currentUser.value = null
+        }
       }
     }
   }

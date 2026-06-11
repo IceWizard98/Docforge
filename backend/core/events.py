@@ -1,13 +1,12 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from uuid import uuid4
 
 
 @dataclass
 class DomainEvent:
     event_id: str = field(default_factory=lambda: f"evt_{uuid4().hex[:8]}")
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -37,7 +36,7 @@ class SpecGenerated(DomainEvent):
 @dataclass
 class DraftGenerated(DomainEvent):
     draft_id: str = ""
-    document_id: Optional[str] = None
+    document_id: str | None = None
 
 
 @dataclass
