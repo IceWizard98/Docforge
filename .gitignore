@@ -29,7 +29,7 @@ htmlcov/
 .coverage
 *.whl
 *.tar.gz
-docs/superpowers/plans/
+docs/
 AGENTS.md
 CLAUDE.md
 diary.md
