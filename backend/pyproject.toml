@@ -19,7 +19,7 @@ line-length = 100
 select = ["E", "F", "I", "W", "B", "SIM", "UP", "ARG", "T20", "S", "PL", "PT", "N"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S105", "PLR2004", "B008", "PLC0415", "ARG", "S311"]
+"tests/*" = ["S101", "S105", "S106", "PLR2004", "B008", "PLC0415", "ARG", "S311"]
 "workers/*" = ["PLC0415", "ARG"]
 "api/*" = ["B008", "PLC0415", "S105", "B904", "ARG"]
 "config/*" = ["B008", "S105"]
