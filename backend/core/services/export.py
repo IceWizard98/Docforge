@@ -1,30 +1,12 @@
 class ExportService:
     async def export_pdf(self, document: dict) -> bytes:
-        title = document.get("title", "Document")
-        content = document.get("content", {})
-        sections = content.get("sections", []) if isinstance(content, dict) else []
-        html = ["<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"]
-        html.append(f"<h1>{_escape_html(title)}</h1>")
-        for section in sections:
-            sec_title = _escape_html(section.get("title", ""))
-            sec_content = _escape_html(section.get("content", ""))
-            html.append(f"<h2>{sec_title}</h2><p>{sec_content}</p>")
-        html.append("</body></html>")
-        return "\n".join(html).encode("utf-8")
+        from adapters.export.pdf import document_to_html
+        from adapters.export.pdf import export_pdf as _export_pdf
+
+        html = document_to_html(document)
+        return _export_pdf(html)
 
     async def export_docx(self, document: dict) -> bytes:
-        title = document.get("title", "Document")
-        content = document.get("content", {})
-        sections = content.get("sections", []) if isinstance(content, dict) else []
-        html = ["<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"]
-        html.append(f"<h1>{_escape_html(title)}</h1>")
-        for section in sections:
-            sec_title = _escape_html(section.get("title", ""))
-            sec_content = _escape_html(section.get("content", ""))
-            html.append(f"<h2>{sec_title}</h2><p>{sec_content}</p>")
-        html.append("</body></html>")
-        return "\n".join(html).encode("utf-8")
+        from adapters.export.docx import export_docx as _export_docx
 
-
-def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return _export_docx(document)

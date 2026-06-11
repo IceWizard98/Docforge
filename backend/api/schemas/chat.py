@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -12,7 +13,7 @@ class EditContext(BaseModel):
 class ChatSessionCreate(BaseModel):
     document_id: str | None = None
     title: str = "New Chat"
-    context_type: str = "create_new"
+    context_type: Literal["create_new", "edit_existing", "review"] = "create_new"
 
 
 class ChatSessionResponse(BaseModel):

@@ -1,3 +1,11 @@
+PENALTY_MAP = {
+    "missing_section": -30,
+    "empty_section": -10,
+    "style_issue": -2,
+    "title_mismatch": -5,
+}
+
+
 class ValidationService:
     async def validate_document(self, document: dict, spec: dict | None = None) -> dict:
         issues: list[dict] = []
@@ -25,13 +33,14 @@ class ValidationService:
                     "message": f"Section '{section.get('title', '')}' is empty",
                 })
 
-        score = max(0.0, 1.0 - len(issues) * 0.1)
+        penalty = sum(PENALTY_MAP.get(i["type"], 0) for i in issues)
+        score = max(0, 100 + penalty)
 
         return {
             "document_id": document.get("id", ""),
             "version": document.get("version", 0),
             "passed": len(issues) == 0,
-            "score": round(score, 2),
+            "score": score,
             "issues": issues,
             "summary": f"{len(issues)} issues found",
         }

@@ -18,9 +18,25 @@ async def start_draft(
 ):
     import uuid
 
+    from adapters.postgresql.models import ChatSessionModel
+
+    chat_result = await session.execute(
+        select(ChatSessionModel).where(
+            ChatSessionModel.id == uuid.UUID(body.chat_session_id),
+            ChatSessionModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        )
+    )
+    chat_session = chat_result.scalar_one_or_none()
+    if chat_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat session not found",
+        )
+
     draft_id = uuid.uuid4()
     model = DraftModel(
         id=draft_id,
+        tenant_id=uuid.UUID(current_user.tenant_id),
         chat_session_id=uuid.UUID(body.chat_session_id),
         document_id=uuid.UUID(body.document_id) if body.document_id else None,
         title="Draft",
@@ -42,7 +58,10 @@ async def get_draft(
     import uuid
 
     result = await session.execute(
-        select(DraftModel).where(DraftModel.id == uuid.UUID(draft_id))
+        select(DraftModel).where(
+            DraftModel.id == uuid.UUID(draft_id),
+            DraftModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        )
     )
     model = result.scalar_one_or_none()
     if model is None:
@@ -61,7 +80,10 @@ async def regenerate_section(
     import uuid
 
     result = await session.execute(
-        select(DraftModel).where(DraftModel.id == uuid.UUID(draft_id))
+        select(DraftModel).where(
+            DraftModel.id == uuid.UUID(draft_id),
+            DraftModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        )
     )
     model = result.scalar_one_or_none()
     if model is None:

@@ -1,9 +1,22 @@
+import asyncio
 import json
+import logging
+import random
 
 import httpx
 
 from config.settings import get_settings
 from ports.llm import LLMConfig, LLMProvider
+
+logger = logging.getLogger(__name__)
+
+MODEL_MAX_INPUT_TOKENS = {
+    "deepseek-chat": 64000,
+    "deepseek-coder": 64000,
+}
+
+DEFAULT_MAX_INPUT_TOKENS = 64000
+CHARS_PER_TOKEN = 4
 
 
 class DeepSeekProvider(LLMProvider):
@@ -26,40 +39,91 @@ class DeepSeekProvider(LLMProvider):
             )
         return self._client
 
+    def _validate_prompt(self, prompt: str, model: str) -> str:
+        model_max = MODEL_MAX_INPUT_TOKENS.get(model, DEFAULT_MAX_INPUT_TOKENS)
+        estimated_tokens = len(prompt) // CHARS_PER_TOKEN
+        if estimated_tokens > model_max:
+            max_chars = model_max * CHARS_PER_TOKEN
+            logger.warning(
+                "Prompt too long: ~%d tokens for %s (max %d), truncating",
+                estimated_tokens, model, model_max,
+            )
+            return prompt[:max_chars]
+        return prompt
+
+    def _validate_response(self, data: dict) -> str:
+        choices = data.get("choices")
+        if not choices or not isinstance(choices, list):
+            logger.error("Malformed response: missing or empty 'choices' list")
+            raise ValueError("LLM response missing 'choices' list")
+        message = choices[0].get("message")
+        if not message:
+            logger.error("Malformed response: missing 'message' in first choice")
+            raise ValueError("LLM response missing 'message' in first choice")
+        content = message.get("content")
+        if content is None:
+            logger.error("Malformed response: missing 'content' in message")
+            raise ValueError("LLM response missing 'content' in message")
+        return content
+
+    async def _post_with_retry(
+        self, url: str, json_payload: dict, max_retries: int = 3
+    ) -> dict:
+        client = await self._get_client()
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                resp = await client.post(url, json=json_payload)
+                if resp.status_code in (429,) or 500 <= resp.status_code < 600:
+                    wait = (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(
+                        "DeepSeek API returned %d, retrying in %.2fs (attempt %d/%d)",
+                        resp.status_code, wait, attempt + 1, max_retries,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                last_exc = e
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "DeepSeek network error: %s, retrying in %.2fs (attempt %d/%d)",
+                    e, wait, attempt + 1, max_retries,
+                )
+                await asyncio.sleep(wait)
+        raise last_exc or RuntimeError("DeepSeek request failed after retries")
+
     async def generate(self, prompt: str, config: LLMConfig | None = None) -> str:
         cfg = config or LLMConfig()
-        client = await self._get_client()
         model = cfg.model or self.model
-        resp = await client.post(
+        validated_prompt = self._validate_prompt(prompt, model)
+        data = await self._post_with_retry(
             "/chat/completions",
-            json={
+            {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": validated_prompt}],
                 "temperature": cfg.temperature,
                 "max_tokens": cfg.max_tokens,
             },
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        return self._validate_response(data)
 
     async def generate_structured(
         self, prompt: str, response_model: type, config: LLMConfig | None = None
     ) -> dict:
         cfg = config or LLMConfig()
-        client = await self._get_client()
         model = cfg.model or self.model
-        resp = await client.post(
+        validated_prompt = self._validate_prompt(prompt, model)
+        data = await self._post_with_retry(
             "/chat/completions",
-            json={
+            {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": validated_prompt}],
                 "temperature": cfg.temperature,
                 "max_tokens": cfg.max_tokens,
                 "response_format": {"type": "json_object"},
             },
         )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        content = self._validate_response(data)
         return json.loads(content)

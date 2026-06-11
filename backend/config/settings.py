@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     storage_provider: str = "minio"
     minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "docforge"
-    minio_secret_key: str = "docforge123"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
     minio_bucket: str = "docforge"
     minio_use_ssl: bool = False
     jwt_secret: str = "change-me-in-production"

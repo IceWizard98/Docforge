@@ -104,17 +104,24 @@ class DocumentRepository:
         )
         return list(result.scalars().all()), total
 
+    def _valid_columns(self) -> set[str]:
+        return {c.name for c in DocumentModel.__table__.columns}
+
     async def update(self, doc_id: str, tenant_id: str, data: dict) -> DocumentModel | None:
         model = await self.get_by_id(doc_id, tenant_id)
         if model is None:
             return None
+        valid = self._valid_columns()
+        unknown = [k for k in data if k not in valid]
+        if unknown:
+            raise ValueError(f"Unknown fields: {unknown}")
         for key, value in data.items():
-            if hasattr(model, key):
-                setattr(model, key, value)
+            setattr(model, key, value)
         await self.session.flush()
         return model
 
     async def delete(self, doc_id: str, tenant_id: str) -> bool:
+        # TODO: implement soft-delete (status='deleted') instead of hard delete
         model = await self.get_by_id(doc_id, tenant_id)
         if model is None:
             return False

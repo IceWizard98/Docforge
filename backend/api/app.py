@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,6 +12,7 @@ from api.routes.patches import router as patches_router
 from api.routes.validation import router as validation_router
 from config.settings import get_settings
 
+logger = logging.getLogger("docforge")
 settings = get_settings()
 
 
@@ -21,13 +24,35 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
+    origins = settings.cors_origins.split(",")
+
+    for origin in origins:
+        if origin.strip() == "*":
+            logger.critical(
+                "CORS: allow_credentials=True with wildcard origin '*' is insecure. "
+                "Set specific origins in cors_origins."
+            )
+            break
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins.split(","),
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.on_event("startup")
+    async def validate_security_settings():
+        if settings.jwt_secret == "change-me-in-production":
+            logger.critical(
+                "JWT secret is still the default 'change-me-in-production'. "
+                "Set a strong, unique JWT_SECRET in production."
+            )
+        if not settings.minio_access_key or not settings.minio_secret_key:
+            logger.warning(
+                "MinIO credentials not configured. Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY."
+            )
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(documents_router, prefix="/api/v1")

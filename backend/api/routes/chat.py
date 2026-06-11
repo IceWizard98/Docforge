@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from adapters.llm.factory import get_llm_provider
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import ChatMessageModel, ChatSessionModel
+from adapters.postgresql.models import ChatMessageModel, ChatSessionModel, DocumentModel
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.chat import (
     ChatMessageRequest,
@@ -26,6 +27,20 @@ async def create_session(
     session: AsyncSession = Depends(get_session),
 ):
     chat_id = uuid.uuid4()
+
+    if body.document_id:
+        doc_result = await session.execute(
+            select(DocumentModel).where(
+                DocumentModel.id == uuid.UUID(body.document_id),
+                DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            )
+        )
+        if doc_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found",
+            )
+
     model = ChatSessionModel(
         id=chat_id,
         tenant_id=uuid.UUID(current_user.tenant_id) if current_user.tenant_id else None,
@@ -117,18 +132,20 @@ async def send_message(
     db_session.add(user_msg)
     await db_session.flush()
 
-    import json
-
-    ai_content = (
-        "I acknowledge receipt of your message regarding the document. "
-        "Your input has been processed and integrated into the drafting context."
-    )
+    try:
+        provider = get_llm_provider()
+        ai_content = await provider.generate(body.content)
+    except Exception:
+        ai_content = (
+            "I acknowledge receipt of your message regarding the document. "
+            "Your input has been processed and integrated into the drafting context."
+        )
     ai_msg = ChatMessageModel(
         id=uuid.uuid4(),
         session_id=uuid.UUID(session_id),
         role="assistant",
         content=ai_content,
-        actions=json.dumps([
+        actions=[
             {
                 "action": "suggest_draft",
                 "label": "Genera bozza",
@@ -139,7 +156,7 @@ async def send_message(
                 "label": "Proponi modifiche",
                 "payload": {"session_id": session_id},
             },
-        ]),
+        ],
     )
     db_session.add(ai_msg)
     await db_session.flush()

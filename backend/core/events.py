@@ -18,6 +18,9 @@ class DocumentParsed(DomainEvent):
 @dataclass
 class DocumentClassified(DomainEvent):
     document_id: str = ""
+    doc_type: str = ""
+    language: str = ""
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass

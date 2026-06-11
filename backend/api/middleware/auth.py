@@ -15,6 +15,12 @@ class AuthUser(BaseModel):
 
 security = HTTPBearer(auto_error=False)
 
+BLACKLISTED_TOKENS: set[str] = set()
+
+
+def blacklist_token(token: str) -> None:
+    BLACKLISTED_TOKENS.add(token)
+
 
 async def get_current_user(
     request: Request,
@@ -26,10 +32,17 @@ async def get_current_user(
             detail="Missing authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    token = credentials.credentials
+    if token in BLACKLISTED_TOKENS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     settings = get_settings()
     try:
         payload = jwt.decode(
-            credentials.credentials,
+            token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
@@ -37,10 +50,16 @@ async def get_current_user(
         tenant_id = payload.get("tenant_id")
         role = payload.get("role")
         email = payload.get("email")
+        token_type = payload.get("token_type")
         if user_id is None or tenant_id is None or role is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token payload",
+            )
+        if token_type != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type for this endpoint",
             )
         request.state.user = payload
         request.state.tenant_id = tenant_id

@@ -1,10 +1,11 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 
 class ExportCreate(BaseModel):
-    format: str = "pdf"
+    format: Literal["pdf", "docx"] = "pdf"
 
 
 class ExportResponse(BaseModel):

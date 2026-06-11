@@ -11,7 +11,7 @@ from ports.llm import LLMProvider
 @lru_cache
 def get_llm_provider() -> LLMProvider:
     settings = get_settings()
-    provider_name = settings.llm_provider if hasattr(settings, "llm_provider") else "openai"
+    provider_name = settings.llm_provider
     if provider_name == "anthropic":
         return AnthropicProvider()
     if provider_name == "ollama":

@@ -1,9 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: EmailStr
+    password: str = Field(min_length=8)
     tenant_slug: str | None = None
 
 
@@ -14,8 +14,8 @@ class TokenResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    email: str
-    password: str
+    email: EmailStr
+    password: str = Field(min_length=8)
     display_name: str
     tenant_slug: str
 
@@ -40,6 +40,7 @@ class TenantResponse(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
+    refresh_token: str = ""
     user: UserResponse
     expires_in: int
 

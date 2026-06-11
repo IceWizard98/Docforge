@@ -131,7 +131,10 @@ async def apply_patch(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found")
 
     doc_result = await session.execute(
-        select(DocumentModel).where(DocumentModel.id == uuid.UUID(audit.entity_id))
+        select(DocumentModel).where(
+            DocumentModel.id == uuid.UUID(audit.entity_id),
+            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        )
     )
     doc = doc_result.scalar_one_or_none()
     if doc:

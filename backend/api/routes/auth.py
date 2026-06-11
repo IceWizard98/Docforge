@@ -1,6 +1,8 @@
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
 from passlib.hash import pbkdf2_sha256
 from sqlalchemy import select
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from adapters.postgresql.base import get_session
 from adapters.postgresql.models import TenantModel, UserModel
 from adapters.postgresql.repositories import TenantRepository, UserRepository
+from api.middleware.auth import blacklist_token
 from api.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -24,12 +27,34 @@ from core.models.tenant import Tenant, User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+RATE_LIMIT_STORE: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(ip: str, max_attempts: int = 5, window_seconds: int = 60) -> None:
+    now = time.time()
+    window_start = now - window_seconds
+    RATE_LIMIT_STORE[ip] = [t for t in RATE_LIMIT_STORE[ip] if t > window_start]
+    if len(RATE_LIMIT_STORE[ip]) >= max_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
+        )
+    RATE_LIMIT_STORE[ip].append(now)
+
 
 def create_access_token(data: dict) -> str:
     settings = get_settings()
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "token_type": "access"})
+    return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def create_refresh_token(data: dict) -> str:
+    settings = get_settings()
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(days=30)
+    to_encode.update({"exp": expire, "token_type": "refresh"})
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -45,9 +70,20 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
 
     existing = await user_repo.get_by_email(str(tenant_model.id), body.email)
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="User already exists in this tenant",
+        return RegisterResponse(
+            token="",
+            user=UserResponse(
+                id="",
+                email=body.email,
+                display_name="",
+                role="",
+            ),
+            tenant=TenantResponse(
+                id=str(tenant_model.id),
+                name=tenant_model.name,
+                slug=tenant_model.slug,
+                status=tenant_model.status,
+            ),
         )
 
     password_hash = pbkdf2_sha256.hash(body.password)
@@ -84,7 +120,13 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+async def login(
+    body: LoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    _check_rate_limit(request.client.host if request.client else "unknown")
+
     settings = get_settings()
     query = select(UserModel).where(UserModel.email == body.email)
     if body.tenant_slug:
@@ -113,8 +155,16 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
         "email": user_model.email,
     })
 
+    refresh_token = create_refresh_token({
+        "sub": str(user_model.id),
+        "tenant_id": str(user_model.tenant_id),
+        "role": user_model.role,
+        "email": user_model.email,
+    })
+
     return LoginResponse(
         token=access_token,
+        refresh_token=refresh_token,
         expires_in=settings.jwt_expiration_minutes * 60,
         user=UserResponse(
             id=str(user_model.id),
@@ -128,19 +178,32 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)):
     settings = get_settings()
+    token = body.refresh_token
+    from api.middleware.auth import BLACKLISTED_TOKENS
+    if token in BLACKLISTED_TOKENS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
     try:
         payload = jwt.decode(
-            body.refresh_token,
+            token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
         user_id = payload.get("sub")
         tenant_id = payload.get("tenant_id")
         role = payload.get("role")
+        token_type = payload.get("token_type")
         if not user_id or not tenant_id or not role:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid refresh token",
+            )
+        if token_type != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type for refresh",
             )
         access_token = create_access_token({
             "sub": user_id,
@@ -157,3 +220,12 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(request: Request):
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        blacklist_token(token)
+    return {"detail": "Logged out successfully"}

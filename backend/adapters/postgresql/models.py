@@ -171,6 +171,7 @@ class DraftModel(Base):
     __tablename__ = "drafts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True)
     chat_session_id = Column(UUID(as_uuid=True), ForeignKey("chat_sessions.id"), nullable=False)
     title = Column(String(500), nullable=False)

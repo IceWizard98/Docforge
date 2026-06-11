@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
+from adapters.postgresql.models import TenantModel
 from adapters.postgresql.repositories import DocumentRepository
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.document import (
@@ -17,8 +19,8 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
-    page: int = 1,
-    per_page: int = 20,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -36,6 +38,18 @@ async def create_document(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    from uuid import UUID
+
+    result = await session.execute(
+        select(TenantModel).where(TenantModel.id == UUID(current_user.tenant_id))
+    )
+    tenant = result.scalar_one_or_none()
+    if not tenant or tenant.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant is not active",
+        )
+
     repo = DocumentRepository(session)
     doc = Document(
         tenant_id=current_user.tenant_id,

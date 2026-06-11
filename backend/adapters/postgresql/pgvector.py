@@ -14,6 +14,7 @@ class PgvectorAdapter:
         self, chunks: list[dict], embeddings: list[list[float]]
     ) -> None:
         for chunk, embedding in zip(chunks, embeddings):
+            embedding_literal = "[" + ",".join(str(v) for v in embedding) + "]"
             await self.session.execute(
                 text(
                     """
@@ -21,9 +22,9 @@ class PgvectorAdapter:
                         section_id, chunk_index, text_content, token_count, metadata, embedding)
                     VALUES (:id, :document_id, :source_document_id,
                         :section_id, :chunk_index, :text_content,
-                        :token_count, :metadata, :embedding)
+                        :token_count, :metadata, :embedding::vector)
                     ON CONFLICT (id) DO UPDATE SET
-                        embedding = :embedding,
+                        embedding = :embedding2::vector,
                         text_content = :text_content,
                         token_count = :token_count
                     """
@@ -37,7 +38,8 @@ class PgvectorAdapter:
                     "text_content": chunk.get("text", ""),
                     "token_count": chunk.get("token_count", 0),
                     "metadata": chunk.get("metadata", {}),
-                    "embedding": str(embedding),
+                    "embedding": embedding_literal,
+                    "embedding2": embedding_literal,
                 },
             )
         await self.session.flush()
@@ -45,23 +47,24 @@ class PgvectorAdapter:
     async def search_similar(
         self, query_embedding: list[float], limit: int = 10, tenant_id: str = ""
     ) -> list[dict]:
+        embedding_literal = "[" + ",".join(str(v) for v in query_embedding) + "]"
         if tenant_id:
             result = await self.session.execute(
                 text(
                     """
                     SELECT dc.id, dc.document_id, dc.section_id, dc.chunk_index,
                         dc.text_content, dc.metadata,
-                        1 - (dc.embedding <=> :embedding) AS similarity
+                        1 - (dc.embedding <=> :embedding::vector) AS similarity
                     FROM document_chunks dc
                     JOIN documents d ON d.id = dc.document_id AND d.tenant_id = :tenant_id
                     WHERE dc.embedding IS NOT NULL
-                    ORDER BY dc.embedding <=> :embedding2
+                    ORDER BY dc.embedding <=> :embedding2::vector
                     LIMIT :limit
                     """
                 ),
                 {
-                    "embedding": str(query_embedding),
-                    "embedding2": str(query_embedding),
+                    "embedding": embedding_literal,
+                    "embedding2": embedding_literal,
                     "tenant_id": tenant_id,
                     "limit": limit,
                 },
@@ -72,16 +75,16 @@ class PgvectorAdapter:
                     """
                     SELECT id, document_id, section_id, chunk_index,
                         text_content, metadata,
-                        1 - (embedding <=> :embedding) AS similarity
+                        1 - (embedding <=> :embedding::vector) AS similarity
                     FROM document_chunks
                     WHERE embedding IS NOT NULL
-                    ORDER BY embedding <=> :embedding2
+                    ORDER BY embedding <=> :embedding2::vector
                     LIMIT :limit
                     """
                 ),
                 {
-                    "embedding": str(query_embedding),
-                    "embedding2": str(query_embedding),
+                    "embedding": embedding_literal,
+                    "embedding2": embedding_literal,
                     "limit": limit,
                 },
             )
