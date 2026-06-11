@@ -70,20 +70,9 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
 
     existing = await user_repo.get_by_email(str(tenant_model.id), body.email)
     if existing:
-        return RegisterResponse(
-            token="",
-            user=UserResponse(
-                id="",
-                email=body.email,
-                display_name="",
-                role="",
-            ),
-            tenant=TenantResponse(
-                id=str(tenant_model.id),
-                name=tenant_model.name,
-                slug=tenant_model.slug,
-                status=tenant_model.status,
-            ),
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User already exists. Please log in.",
         )
 
     password_hash = pbkdf2_sha256.hash(body.password)
