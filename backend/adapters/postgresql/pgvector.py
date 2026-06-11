@@ -97,3 +97,12 @@ class PgvectorAdapter:
             {"document_id": document_id},
         )
         await self.session.flush()
+
+    async def has_fulltext_search(self) -> bool:
+        result = await self.session.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'document_chunks' AND column_name = 'tsv_content'"
+            )
+        )
+        return result.scalar() is not None
