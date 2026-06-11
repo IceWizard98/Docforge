@@ -81,7 +81,7 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSessionDetailResponse)
-async def get_session(
+async def get_chat_session(
     session_id: str,
     current_user: AuthUser = Depends(get_current_user),
     db_session: AsyncSession = Depends(get_session),
@@ -135,20 +135,17 @@ async def send_message(
     db_session.add(user_msg)
     await db_session.flush()
 
-    error_state = None
     try:
         provider = get_llm_provider()
         ai_content = await provider.generate(body.content)
     except Exception:
         logger.exception("LLM generation failed for session %s", session_id)
         ai_content = "I'm sorry, I encountered an error processing your request. Please try again."
-        error_state = {"error": "llm_failure", "message": "AI provider unavailable"}
     ai_msg = ChatMessageModel(
         id=uuid.uuid4(),
         session_id=uuid.UUID(session_id),
         role="assistant",
         content=ai_content,
-        sources=[error_state] if error_state else [],
         actions=[
             {
                 "action": "suggest_draft",
