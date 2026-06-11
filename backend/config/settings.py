@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = ConfigDict(env_file=".env")
+    model_config = ConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://docforge:docforge@localhost:5432/docforge"
     redis_url: str = "redis://localhost:6379/0"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-5-sonnet-20241022"
+    cors_origins: str = "http://localhost:5173"
     log_level: str = "INFO"
     otel_service_name: str = "docforge"
     enable_otel: bool = False

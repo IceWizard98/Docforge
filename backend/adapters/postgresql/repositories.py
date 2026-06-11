@@ -8,6 +8,12 @@ from core.models.document import Document
 from core.models.tenant import Tenant, User
 
 
+def _ensure_uuid(value: str | UUID) -> UUID:
+    if isinstance(value, UUID):
+        return value
+    return UUID(value)
+
+
 class TenantRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -35,10 +41,9 @@ class UserRepository:
         self.session = session
 
     async def get_by_email(self, tenant_id: str, email: str) -> UserModel | None:
-        tid = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
         result = await self.session.execute(
             select(UserModel).where(
-                UserModel.tenant_id == tid,
+                UserModel.tenant_id == _ensure_uuid(tenant_id),
                 UserModel.email == email,
             )
         )
@@ -46,9 +51,7 @@ class UserRepository:
 
     async def create(self, user: User, password_hash: str) -> UserModel:
         model = UserModel(
-            tenant_id=(
-                UUID(user.tenant_id) if isinstance(user.tenant_id, str) and user.tenant_id else None
-            ),
+            tenant_id=_ensure_uuid(user.tenant_id) if user.tenant_id else None,
             email=user.email,
             display_name=user.display_name,
             role=user.role.value if hasattr(user.role, 'value') else user.role,
@@ -66,14 +69,14 @@ class DocumentRepository:
 
     async def create(self, doc: Document, content: dict) -> DocumentModel:
         model = DocumentModel(
-            tenant_id=UUID(doc.tenant_id) if isinstance(doc.tenant_id, str) else doc.tenant_id,
+            tenant_id=_ensure_uuid(doc.tenant_id) if doc.tenant_id else None,
             title=doc.title,
             doc_type=doc.doc_type,
             status=doc.status.value if hasattr(doc.status, 'value') else doc.status,
             language=doc.language,
             version=doc.version,
             content=content,
-            created_by=UUID(doc.created_by) if isinstance(doc.created_by, str) else doc.created_by,
+            created_by=_ensure_uuid(doc.created_by) if doc.created_by else None,
         )
         self.session.add(model)
         await self.session.flush()
@@ -82,8 +85,8 @@ class DocumentRepository:
     async def get_by_id(self, doc_id: str, tenant_id: str) -> DocumentModel | None:
         result = await self.session.execute(
             select(DocumentModel).where(
-                DocumentModel.id == UUID(doc_id) if _is_uuid(doc_id) else doc_id,
-                DocumentModel.tenant_id == UUID(tenant_id) if _is_uuid(tenant_id) else tenant_id,
+                DocumentModel.id == _ensure_uuid(doc_id),
+                DocumentModel.tenant_id == _ensure_uuid(tenant_id),
             )
         )
         return result.scalar_one_or_none()
@@ -91,8 +94,9 @@ class DocumentRepository:
     async def get_by_tenant(
         self, tenant_id: str, page: int = 1, per_page: int = 20
     ) -> tuple[list[DocumentModel], int]:
-        tid = UUID(tenant_id) if isinstance(tenant_id, str) and _is_uuid(tenant_id) else tenant_id
-        base = select(DocumentModel).where(DocumentModel.tenant_id == tid)
+        base = select(DocumentModel).where(
+            DocumentModel.tenant_id == _ensure_uuid(tenant_id)
+        )
         total = await self.session.scalar(select(func.count()).select_from(base.subquery())) or 0
         offset = (page - 1) * per_page
         result = await self.session.execute(
@@ -117,11 +121,3 @@ class DocumentRepository:
         await self.session.delete(model)
         await self.session.flush()
         return True
-
-
-def _is_uuid(value: str) -> bool:
-    try:
-        UUID(value)
-        return True
-    except (ValueError, AttributeError):
-        return False

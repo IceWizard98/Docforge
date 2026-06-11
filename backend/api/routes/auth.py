@@ -1,13 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from jose import jwt
+from jose import JWTError, jwt
 from passlib.hash import pbkdf2_sha256
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import UserModel
+from adapters.postgresql.models import TenantModel, UserModel
 from adapters.postgresql.repositories import TenantRepository, UserRepository
 from api.schemas.auth import (
     LoginRequest,
@@ -86,9 +86,15 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
 @router.post("/login", response_model=LoginResponse)
 async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
     settings = get_settings()
-    result = await session.execute(
-        select(UserModel).where(UserModel.email == body.email)
-    )
+    query = select(UserModel).where(UserModel.email == body.email)
+    if body.tenant_slug:
+        tenant_result = await session.execute(
+            select(TenantModel).where(TenantModel.slug == body.tenant_slug)
+        )
+        tenant_model = tenant_result.scalar_one_or_none()
+        if tenant_model:
+            query = query.where(UserModel.tenant_id == tenant_model.id)
+    result = await session.execute(query)
     user_model = result.scalar_one_or_none()
 
     if not user_model or not pbkdf2_sha256.verify(body.password, user_model.password_hash):
@@ -146,7 +152,7 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
             access_token=access_token,
             expires_in=settings.jwt_expiration_minutes * 60,
         )
-    except Exception:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",

@@ -73,7 +73,7 @@ export async function register(
 export async function uploadDocument(file: File): Promise<DocumentResponse> {
   const formData = new FormData()
   formData.append('file', file)
-  const response = await apiClient.post<DocumentResponse>('/documents/upload', formData, {
+  const response = await apiClient.post<DocumentResponse>('/documents', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   return response.data
@@ -104,7 +104,7 @@ export interface ChatSessionResponse {
 }
 
 export async function createChatSession(documentId: string): Promise<ChatSessionResponse> {
-  const response = await apiClient.post<ChatSessionResponse>('/chat/sessions', { documentId })
+  const response = await apiClient.post<ChatSessionResponse>('/chat/sessions', { document_id: documentId })
   return response.data
 }
 

@@ -28,7 +28,7 @@ scripts-lint:
 test-all: test-backend test-frontend
 
 test-backend:
-    cd backend && pytest tests/ -v --cov=core
+    cd backend && source .venv/bin/activate && python -m pytest tests/ -v --cov
 
 test-frontend:
     cd frontend && npm run test
