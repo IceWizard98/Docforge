@@ -1,23 +1,17 @@
+import json
 import logging
-from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Any
-from uuid import UUID
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SearchFilters:
+class RetrievalFilters:
     doc_type: list[str] | None = None
     tags: list[str] | None = None
     language: str | None = None
-    jurisdiction: str | None = None
     chunk_type: str | None = None
-    source_doc_ids: list[UUID] | None = None
     confidence_min: float | None = None
-    date_from: str | None = None
-    date_to: str | None = None
 
 
 @dataclass
@@ -32,111 +26,29 @@ class SearchResult:
     rerank_score: float | None = None
 
 
-@dataclass
-class ContextChunk:
-    chunk_id: str
-    content: str
-    section_title: str | None
-    chunk_type: str | None
-    relevance_score: float
-
-
-@dataclass
-class ContextSource:
-    doc_id: str
-    title: str
-    doc_type: str | None
-    chunks: list[ContextChunk]
-
-
-@dataclass
-class ContextPack:
-    sources: list[ContextSource] = field(default_factory=list)
-    total_tokens: int = 0
-
-
 class HybridSearchService:
     RRF_K = 60
 
-    def __init__(self, db_session):
-        self.session = db_session
-
-    async def vector_search(
-        self,
-        embedding: list[float],
-        filters: SearchFilters | None = None,
-        top_k: int = 40,
-    ) -> list[dict]:
-        filter_clauses = ""
-        params: list[Any] = [embedding, top_k * 2]
-
-        if filters:
-            conditions = []
-            if filters.source_doc_ids:
-                placeholders = ",".join(
-                    f"'{str(s)}'::uuid" for s in filters.source_doc_ids
-                )
-                conditions.append(f"dc.document_id IN ({placeholders})")  # noqa: S608
-            if conditions:
-                filter_clauses = " AND " + " AND ".join(conditions)
-
-        query = f"""
-            SELECT dc.id as chunk_id, dc.text_content as content,
-                   dc.document_id as doc_id, dc.section_id,
-                   (1 - (dc.embedding <=> %s::vector)) AS score
-            FROM document_chunks dc
-            WHERE dc.embedding IS NOT NULL{filter_clauses}
-            ORDER BY dc.embedding <=> %s::vector
-            LIMIT %s
-        """  # noqa: S608
-        result = await self.session.execute(query, params)
-        rows = result.fetchall()
-        return [dict(r._mapping) for r in rows]
-
-    async def fulltext_search(
-        self,
-        query_text: str,
-        filters: SearchFilters | None = None,
-        top_k: int = 40,
-    ) -> list[dict]:
-        params: list[Any] = [query_text, top_k * 2]
-
-        ts_query = "plainto_tsquery('italian', %s)"
-        ts_vector = "to_tsvector('italian', coalesce(dc.text_content, ''))"
-
-        filter_clauses = ""
-        if filters:
-            conditions = []
-            if filters.source_doc_ids:
-                placeholders = ",".join(
-                    f"'{str(s)}'::uuid" for s in filters.source_doc_ids
-                )
-                conditions.append(f"dc.document_id IN ({placeholders})")  # noqa: S608
-            if conditions:
-                filter_clauses = " AND " + " AND ".join(conditions)
-
-        query = f"""
-            SELECT dc.id as chunk_id, dc.text_content as content,
-                   dc.document_id as doc_id, dc.section_id,
-                   ts_rank({ts_vector}, {ts_query}) AS score
-            FROM document_chunks dc
-            WHERE {ts_vector} @@ {ts_query}{filter_clauses}
-            ORDER BY score DESC
-            LIMIT %s
-        """  # noqa: S608
-        result = await self.session.execute(query, params)
-        rows = result.fetchall()
-        return [dict(r._mapping) for r in rows]
+    def __init__(self, pgvector, llm_provider=None):
+        self.pgvector = pgvector
+        self.llm_provider = llm_provider
 
     async def hybrid_search(
         self,
         embedding: list[float],
         query_text: str,
-        filters: SearchFilters | None = None,
+        filters: RetrievalFilters | None = None,
         top_k: int = 20,
     ) -> list[SearchResult]:
-        vector_results = await self.vector_search(embedding, filters, top_k)
-        ft_results = await self.fulltext_search(query_text, filters, top_k)
+        vector_limit = top_k * 2
+        ft_limit = top_k * 2
+
+        vector_results = await self.pgvector.search_similar(
+            embedding, limit=vector_limit, filters=filters
+        )
+        ft_results = await self.pgvector.fulltext_search(
+            query_text, limit=ft_limit, filters=filters
+        )
 
         combined: dict[str, dict] = {}
         for rank, row in enumerate(vector_results):
@@ -177,43 +89,48 @@ class HybridSearchService:
                 )
             )
 
+        if self.llm_provider:
+            results = await self._rerank_results(query_text, results)
+
         return results
 
-    async def build_context_pack(
-        self,
-        results: list[SearchResult],
-        used_chunk_ids: set[str] | None = None,
-    ) -> ContextPack:
-        used = used_chunk_ids or set()
-        fresh = [r for r in results if r.chunk_id not in used]
+    async def _rerank_results(
+        self, query: str, results: list[SearchResult]
+    ) -> list[SearchResult]:
+        if not results:
+            return results
 
-        groups: dict[str, list[SearchResult]] = defaultdict(list)
-        for r in fresh:
-            groups[r.doc_id].append(r)
+        best_score = max(r.score for r in results)
+        if best_score >= 0.7:
+            return results
 
-        total_tokens = 0
-        sources: list[ContextSource] = []
+        top_n = results[:5]
+        chunks_text = "\n\n".join(
+            f"[{i + 1}] {r.content[:500]}" for i, r in enumerate(top_n)
+        )
 
-        for doc_id, group in groups.items():
-            chunks = [
-                ContextChunk(
-                    chunk_id=r.chunk_id,
-                    content=r.content,
-                    section_title=None,
-                    chunk_type=None,
-                    relevance_score=r.score,
-                )
-                for r in group
-            ]
-            sources.append(
-                ContextSource(
-                    doc_id=doc_id,
-                    title=f"Source {doc_id[:8]}...",
-                    doc_type=None,
-                    chunks=chunks,
-                )
-            )
-            for r in group:
-                total_tokens += len(r.content) // 4
+        prompt = (
+            "You are a search relevance judge. "
+            "Rate each chunk's relevance to the query on a scale 0-10. "
+            "Return ONLY a JSON object with a 'scores' array of integers.\n\n"
+            f"Query: {query}\n\n"
+            f"Chunks:\n{chunks_text}"
+        )
 
-        return ContextPack(sources=sources, total_tokens=total_tokens)
+        try:
+            raw = await self.llm_provider.generate(prompt)
+            resp = json.loads(raw)
+            llm_scores = resp.get("scores") if isinstance(resp, dict) else None
+            if llm_scores and len(llm_scores) == len(top_n):
+                max_llm = max(llm_scores) or 1
+                for i, r in enumerate(top_n):
+                    normalized = llm_scores[i] / max_llm
+                    r.rerank_score = normalized
+                    r.score = (r.score + normalized) / 2
+                results.sort(key=lambda x: x.score, reverse=True)
+        except Exception:
+            logger.exception("LLM reranker failed, using base scores")
+
+        return results
+
+

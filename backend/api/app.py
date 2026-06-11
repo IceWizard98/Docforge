@@ -10,6 +10,7 @@ from api.routes.documents import router as documents_router
 from api.routes.drafts import router as drafts_router
 from api.routes.exports import router as exports_router
 from api.routes.patches import router as patches_router
+from api.routes.sources import router as sources_router
 from api.routes.templates import router as templates_router
 from api.routes.validation import router as validation_router
 from config.settings import get_settings
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(comments_router, prefix="/api/v1")
     app.include_router(validation_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
+    app.include_router(sources_router, prefix="/api/v1")
     app.include_router(exports_router, prefix="/api/v1")
 
     @app.get("/health")

@@ -1,22 +1,27 @@
 import logging
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-
-from adapters.postgresql.pgvector import PgvectorAdapter
-from core.services.search import HybridSearchService, RetrievalFilters, SearchResult
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ContextChunk:
-    chunk_id: str = ""
-    content: str = ""
+    chunk_id: str
+    content: str
+    section_title: str | None = None
+    chunk_type: str | None = None
+    relevance_score: float = 0.0
     source_doc_id: str = ""
 
 
 @dataclass
 class ContextSource:
-    doc_id: str = ""
+    doc_id: str
+    title: str = ""
+    doc_type: str | None = None
     chunks: list[ContextChunk] = field(default_factory=list)
 
 
@@ -27,140 +32,109 @@ class ContextPack:
 
 
 class ContextPackService:
-    def __init__(self, db_session=None, pgvector=None, llm_provider=None):
-        if pgvector:
-            self._pgvector = pgvector
-            self._search = HybridSearchService(pgvector, llm_provider)
-        elif db_session:
-            self._pgvector = PgvectorAdapter(db_session)
-            self._search = HybridSearchService(self._pgvector, llm_provider)
-        else:
-            self._pgvector = None
-            self._search = None
+    MAX_TOKENS = 4000
 
-    async def build_section_context(
+    def __init__(
         self,
-        document_id: str,
-        section_title: str,
-        section_id: str,
-        embedding: list[float] | None = None,
-        max_chunks: int = 20,
+        search_service=None,
+        embedding_fn: Callable[[str], list[float]] | None = None,
+        pgvector=None,
+        llm_provider=None,
     ):
-        if not self._search or not self._pgvector:
-            return ContextPack(sources=[])
+        if search_service is not None:
+            self._search = search_service
+        elif pgvector is not None:
+            from core.services.search import HybridSearchService
 
-        query = section_title or section_id or ""
-        if not query:
-            return ContextPack(sources=[])
+            self._search = HybridSearchService(pgvector, llm_provider)
+        else:
+            self._search = None
+        self._embedding_fn = embedding_fn or self._default_embedding
 
-        try:
-            results = await self._fetch_results(query, embedding, max_chunks)
-            groups = self._group_by_doc(results)
-            sources, total_tokens = self._build_sources(groups)
-            return ContextPack(sources=sources, total_tokens=total_tokens)
-        except Exception:
-            logger.exception(
-                "build_section_context failed for %s/%s", document_id, section_id
-            )
-            return ContextPack(sources=[])
+    async def _default_embedding(self, query: str) -> list[float]:
+        return [0.0] * 384
 
-    async def _fetch_results(self, query: str, embedding: list[float] | None, max_chunks: int):
-        filters = RetrievalFilters()
-        if embedding:
-            return await self._search.hybrid_search(embedding, query, filters, top_k=max_chunks)
-        raw = await self._pgvector.fulltext_search(query, limit=max_chunks)
-        return [
-            SearchResult(
-                chunk_id=str(r["chunk_id"]),
-                content=r["content"],
-                doc_id=str(r["doc_id"]),
-                section_id=str(r.get("section_id")) if r.get("section_id") else None,
-                score=float(r.get("score", 0)),
-            )
-            for r in raw
-        ]
+    async def build_section_context(  # noqa: PLR0913
+        self,
+        spec_section: dict[str, Any] | None = None,
+        session_history: list[dict[str, Any]] | None = None,
+        filters=None,
+        top_k: int = 5,
+        document_id: str = "",
+        section_title: str = "",
+        section_id: str = "",
+    ) -> ContextPack:
+        if self._search is None:
+            return ContextPack()
 
-    @staticmethod
-    def _group_by_doc(results: list) -> dict[str, list]:
-        groups: dict[str, list] = {}
-        for r in results:
-            groups.setdefault(r.doc_id, []).append(r)
-        return groups
+        if spec_section is not None:
+            title = spec_section.get("title", "")
+            purpose = spec_section.get("purpose", "")
+            query = f"{title}: {purpose}" if purpose else title
+        else:
+            query = section_title or section_id or ""
 
-    @staticmethod
-    def _build_sources(groups: dict[str, list]):
-        total_tokens = 0
-        sources: list[ContextSource] = []
-        for doc_id, group in groups.items():
-            chunks = [
-                ContextChunk(
-                    chunk_id=r.chunk_id,
-                    content=r.content,
-                    section_title=r.section_id,
-                    relevance_score=r.score,
-                    source_doc_id=r.doc_id,
-                )
-                for r in group
-            ]
-            sources.append(ContextSource(doc_id=doc_id, title=f"Source {doc_id[:8]}", chunks=chunks))
-            for r in group:
-                total_tokens += len(r.content) // 4
-        return sources, total_tokens
-
-        query = section_title or section_id or ""
         if not query:
             return ContextPack()
 
-        try:
-            filters = RetrievalFilters()
-            if embedding:
-                results = await self._search.hybrid_search(
-                    embedding, query, filters, top_k=max_chunks
-                )
-            else:
-                raw = await self._pgvector.fulltext_search(
-                    query, limit=max_chunks
-                )
-                results = [
-                    SearchResult(
-                        chunk_id=str(r["chunk_id"]),
-                        content=r["content"],
-                        doc_id=str(r["doc_id"]),
-                        section_id=str(r.get("section_id")) if r.get("section_id") else None,
-                        score=float(r.get("score", 0)),
-                    )
-                    for r in raw
-                ]
+        embedding = await self._embedding_fn(query)
+        results = await self._search.hybrid_search(embedding, query, filters, top_k * 2)
 
-            source_map: dict[str, list[SearchResult]] = {}
-            for r in results:
-                source_map.setdefault(r.doc_id, []).append(r)
+        used_chunk_ids = self._get_used_chunk_ids(session_history)
+        results = [r for r in results if r.chunk_id not in used_chunk_ids]
 
-            sources = []
-            total_tokens = 0
-            for doc_id, group in source_map.items():
-                chunks = [
+        groups: dict[str, list] = defaultdict(list)
+        for r in results:
+            groups[r.doc_id].append(r)
+
+        total_tokens = 0
+        sources: list[ContextSource] = []
+
+        for doc_id, group in groups.items():
+            chunks: list[ContextChunk] = []
+            for r in group:
+                tokens = max(1, len(r.content) // 4)
+                if total_tokens + tokens > self.MAX_TOKENS:
+                    break
+                chunks.append(
                     ContextChunk(
                         chunk_id=r.chunk_id,
                         content=r.content,
-                        source_doc_id=doc_id,
+                        section_title=r.section_id,
+                        chunk_type=None,
+                        relevance_score=r.score,
+                        source_doc_id=r.doc_id,
                     )
-                    for r in group
-                ]
-                sources.append(ContextSource(doc_id=doc_id, chunks=chunks))
-                for r in group:
-                    total_tokens += len(r.content) // 4
+                )
+                total_tokens += tokens
+            if chunks:
+                sources.append(
+                    ContextSource(
+                        doc_id=doc_id,
+                        doc_type=None,
+                        chunks=chunks,
+                    )
+                )
 
-            return ContextPack(sources=sources, total_tokens=total_tokens)
-        except Exception:
-            logger.exception(
-                "build_section_context failed for %s/%s", document_id, section_id
-            )
-            return ContextPack()
+        return ContextPack(sources=sources, total_tokens=total_tokens)
 
     def build_prompt_context(self, context_pack: ContextPack) -> str:
         parts = []
         for source in context_pack.sources:
+            parts.append(f"--- {source.title} ---")
             for chunk in source.chunks:
-                parts.append(f"[{chunk.source_doc_id}] {chunk.content[:500]}")
-        return "\n".join(parts)
+                parts.append(chunk.content)
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _get_used_chunk_ids(session_history: list[dict] | None) -> set[str]:
+        if not session_history:
+            return set()
+        used: set[str] = set()
+        for msg in session_history:
+            if isinstance(msg, dict):
+                for key in ("context_chunks", "used_chunks"):
+                    chunks = msg.get(key)
+                    if isinstance(chunks, list):
+                        used.update(str(c) for c in chunks)
+        return used
