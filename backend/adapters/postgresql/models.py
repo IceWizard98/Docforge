@@ -153,6 +153,25 @@ class CommentModel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class PatchSetModel(Base):
+    __tablename__ = "patch_sets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True)
+    chat_message_id = Column(UUID(as_uuid=True), nullable=True)
+    version_from = Column(Integer, nullable=False, default=0)
+    version_to = Column(Integer, nullable=True)
+    status = Column(String(32), nullable=False, default="proposed")
+    summary = Column(String(500), nullable=False, default="")
+    operations = Column(JSON, nullable=False, default=list)
+    created_by = Column(UUID(as_uuid=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class AuditEventModel(Base):
     __tablename__ = "audit_events"
 

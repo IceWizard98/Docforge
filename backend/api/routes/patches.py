@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import DocumentModel
+from adapters.postgresql.models import DocumentModel, PatchSetModel
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.patches import PatchGenerateRequest, PatchSetResponse
 
@@ -28,33 +28,30 @@ async def generate_patch(
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    patch_id = uuid.uuid4()
-    patch_data = {
-        "id": str(patch_id),
-        "document_id": body.document_id,
-        "version_from": doc.version,
-        "version_to": doc.version + 1,
-        "summary": f"Patch generated from: {body.instructions[:100]}",
-        "operations": [],
-        "status": "proposed",
-        "created_by": current_user.user_id,
-        "created_at": "2025-01-01T00:00:00Z",
-    }
-
-    from adapters.postgresql.models import AuditEventModel
-
-    audit = AuditEventModel(
+    patch_set = PatchSetModel(
         id=uuid.uuid4(),
         tenant_id=uuid.UUID(current_user.tenant_id),
-        user_id=uuid.UUID(current_user.user_id),
-        event_type="patch_generated",
-        entity_type="document",
-        entity_id=body.document_id,
-        payload={"instructions": body.instructions[:200]},
+        document_id=uuid.UUID(body.document_id),
+        version_from=doc.version,
+        version_to=doc.version + 1,
+        status="proposed",
+        summary=f"Patch generated from: {body.instructions[:100]}",
+        operations=[],
+        created_by=uuid.UUID(current_user.user_id),
     )
-    session.add(audit)
+    session.add(patch_set)
     await session.flush()
-    return PatchSetResponse(**patch_data)
+
+    return PatchSetResponse(
+        id=str(patch_set.id),
+        document_id=body.document_id,
+        version_from=patch_set.version_from,
+        version_to=patch_set.version_to,
+        summary=patch_set.summary,
+        operations=[],
+        created_by=str(patch_set.created_by),
+        created_at=patch_set.created_at,
+    )
 
 
 @router.get("/{patch_id}", response_model=PatchSetResponse)
@@ -65,28 +62,25 @@ async def get_patch(
 ):
     import uuid
 
-    from adapters.postgresql.models import AuditEventModel
-
     result = await session.execute(
-        select(AuditEventModel).where(
-            AuditEventModel.id == uuid.UUID(patch_id),
-            AuditEventModel.tenant_id == uuid.UUID(current_user.tenant_id),
-            AuditEventModel.event_type == "patch_generated",
+        select(PatchSetModel).where(
+            PatchSetModel.id == uuid.UUID(patch_id),
+            PatchSetModel.tenant_id == uuid.UUID(current_user.tenant_id),
         )
     )
-    audit = result.scalar_one_or_none()
-    if audit is None:
+    patch = result.scalar_one_or_none()
+    if patch is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found")
 
     return PatchSetResponse(
-        id=str(audit.id),
-        document_id=audit.entity_id,
-        version_from=0,
-        version_to=1,
-        summary="Patch set",
-        operations=[],
-        created_by=str(audit.user_id),
-        created_at=audit.created_at,
+        id=str(patch.id),
+        document_id=str(patch.document_id),
+        version_from=patch.version_from,
+        version_to=patch.version_to,
+        summary=patch.summary,
+        operations=patch.operations or [],
+        created_by=str(patch.created_by),
+        created_at=patch.created_at,
     )
 
 
@@ -118,27 +112,28 @@ async def apply_patch(
 ):
     import uuid
 
-    from adapters.postgresql.models import AuditEventModel
-
     result = await session.execute(
-        select(AuditEventModel).where(
-            AuditEventModel.id == uuid.UUID(patch_id),
-            AuditEventModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        select(PatchSetModel).where(
+            PatchSetModel.id == uuid.UUID(patch_id),
+            PatchSetModel.tenant_id == uuid.UUID(current_user.tenant_id),
         )
     )
-    audit = result.scalar_one_or_none()
-    if audit is None:
+    patch = result.scalar_one_or_none()
+    if patch is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found")
 
     doc_result = await session.execute(
         select(DocumentModel).where(
-            DocumentModel.id == uuid.UUID(audit.entity_id),
+            DocumentModel.id == patch.document_id,
             DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
         )
     )
     doc = doc_result.scalar_one_or_none()
     if doc:
         doc.version += 1
+        await session.flush()
+        patch.version_to = doc.version
+        patch.status = "applied"
         await session.flush()
 
     return {"status": "applied", "patch_id": patch_id, "new_version": doc.version if doc else 0}
