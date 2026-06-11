@@ -33,3 +33,18 @@ class DocumentUpdate(BaseModel):
     title: str | None = None
     content: dict | None = None
     status: str | None = None
+
+
+class SourceDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    document_id: UUID | None = None
+    filename: str
+    doc_type: str
+    file_key: str
+    status: str
+    parsed_content: dict | None = None
+    metadata: dict
+    created_at: datetime
