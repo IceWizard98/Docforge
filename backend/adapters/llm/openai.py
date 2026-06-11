@@ -8,13 +8,11 @@ from ports.llm import LLMConfig, LLMProvider
 
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str = "", model: str = "gpt-4o"):
+    def __init__(self, api_key: str = "", model: str = "gpt-4o", base_url: str = ""):
         settings = get_settings()
-        self.api_key = api_key or (
-            settings.openai_api_key if hasattr(settings, "openai_api_key") else ""
-        )
+        self.api_key = api_key or settings.openai_api_key
         self.model = model
-        self.base_url = "https://api.openai.com/v1"
+        self.base_url = base_url or settings.openai_base_url
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:

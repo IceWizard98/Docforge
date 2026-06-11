@@ -1,5 +1,4 @@
 import json
-from functools import lru_cache
 
 import httpx
 
@@ -7,14 +6,12 @@ from config.settings import get_settings
 from ports.llm import LLMConfig, LLMProvider
 
 
-class AnthropicProvider(LLMProvider):
-    def __init__(
-        self, api_key: str = "", model: str = "claude-3-5-sonnet-20241022", base_url: str = ""
-    ):
+class DeepSeekProvider(LLMProvider):
+    def __init__(self, api_key: str = "", model: str = "deepseek-chat", base_url: str = ""):
         settings = get_settings()
-        self.api_key = api_key or settings.anthropic_api_key
-        self.model = model
-        self.base_url = base_url or settings.anthropic_base_url
+        self.api_key = api_key or settings.deepseek_api_key
+        self.model = model or settings.deepseek_model
+        self.base_url = base_url or settings.deepseek_base_url
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -22,8 +19,7 @@ class AnthropicProvider(LLMProvider):
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
+                    "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
                 timeout=120.0,
@@ -35,7 +31,7 @@ class AnthropicProvider(LLMProvider):
         client = await self._get_client()
         model = cfg.model or self.model
         resp = await client.post(
-            "/messages",
+            "/chat/completions",
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -45,7 +41,7 @@ class AnthropicProvider(LLMProvider):
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["content"][0]["text"]
+        return data["choices"][0]["message"]["content"]
 
     async def generate_structured(
         self, prompt: str, response_model: type, config: LLMConfig | None = None
@@ -54,20 +50,16 @@ class AnthropicProvider(LLMProvider):
         client = await self._get_client()
         model = cfg.model or self.model
         resp = await client.post(
-            "/messages",
+            "/chat/completions",
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": cfg.temperature,
                 "max_tokens": cfg.max_tokens,
+                "response_format": {"type": "json_object"},
             },
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data["content"][0]["text"]
+        content = data["choices"][0]["message"]["content"]
         return json.loads(content)
-
-
-@lru_cache
-def get_anthropic_provider() -> AnthropicProvider:
-    return AnthropicProvider()
