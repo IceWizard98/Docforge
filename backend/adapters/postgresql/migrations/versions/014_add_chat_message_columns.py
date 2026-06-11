@@ -8,8 +8,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "013"
-down_revision = "012"
+revision = "014"
+down_revision = "013"
 
 
 def upgrade():

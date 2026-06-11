@@ -8,8 +8,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
 
-revision = "013"
-down_revision = "012"
+revision = "015"
+down_revision = "014"
 
 
 def upgrade():

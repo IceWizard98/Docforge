@@ -45,20 +45,13 @@ export interface Suggestion {
 }
 
 export interface Comment {
-  commentId: string
-  threadId: string
+  id: string
+  document_id: string
+  thread_id: string | null
   author: string
-  text: string
+  content: string
   resolved: boolean
-  createdAt: string
-  replies: CommentReply[]
-}
-
-export interface CommentReply {
-  replyId: string
-  author: string
-  text: string
-  createdAt: string
+  created_at: string
 }
 
 export interface ChatMessageResponse {
