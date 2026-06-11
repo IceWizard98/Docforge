@@ -31,8 +31,27 @@ class ChatSessionResponse(BaseModel):
     updated_at: datetime
 
 
+class SessionListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    document_id: uuid.UUID | None = None
+    user_id: uuid.UUID
+    title: str
+    context_type: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    last_message_preview: str | None = None
+
+
+class SessionUpdate(BaseModel):
+    title: str | None = None
+
+
 class ChatSessionListResponse(BaseModel):
-    data: list[ChatSessionResponse]
+    data: list[SessionListItem]
     meta: dict
 
 
