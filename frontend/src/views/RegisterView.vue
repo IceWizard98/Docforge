@@ -10,6 +10,7 @@ const authStore = useAuthStore()
 
 const email = ref('')
 const password = ref('')
+const passwordConfirm = ref('')
 const displayName = ref('')
 const tenantSlug = ref('')
 const loading = ref(false)
@@ -17,13 +18,18 @@ const error = ref<string | null>(null)
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const emailValid = computed(() => emailPattern.test(email.value.trim()))
+const passwordMinLength = computed(() => password.value.length >= 8)
+const passwordsMatch = computed(() => password.value === passwordConfirm.value)
+const slugPattern = /^[a-zA-Z0-9-]+$/
+const slugValid = computed(() => !tenantSlug.value || slugPattern.test(tenantSlug.value))
+const formValid = computed(() => emailValid.value && passwordMinLength.value && passwordsMatch.value && displayName.value.trim().length > 0 && slugValid.value)
 
 function sanitizeSlug(val: string): string {
   return val.trim().replace(/[^a-zA-Z0-9-]/g, '').toLowerCase()
 }
 
 async function handleSubmit() {
-  if (!email.value.trim() || !password.value.trim() || !displayName.value.trim() || !emailValid.value) return
+  if (!formValid.value) return
 
   loading.value = true
   error.value = null
@@ -95,9 +101,29 @@ async function handleSubmit() {
               v-model="password"
               type="password"
               class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
-              placeholder="••••••••"
+              placeholder="Almeno 8 caratteri"
               autocomplete="new-password"
             />
+            <p v-if="password && !passwordMinLength" class="mt-1 text-xs text-danger">
+              Minimo 8 caratteri
+            </p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-foreground/60 mb-1" for="reg-password-confirm">
+              Conferma Password
+            </label>
+            <input
+              id="reg-password-confirm"
+              v-model="passwordConfirm"
+              type="password"
+              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              placeholder="Ripeti la password"
+              autocomplete="new-password"
+            />
+            <p v-if="passwordConfirm && !passwordsMatch" class="mt-1 text-xs text-danger">
+              Le password non coincidono
+            </p>
           </div>
 
           <div>
@@ -111,6 +137,9 @@ async function handleSubmit() {
               class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="default"
             />
+            <p v-if="tenantSlug && !slugValid" class="mt-1 text-xs text-danger">
+              Solo lettere, numeri e trattini
+            </p>
           </div>
 
           <div
@@ -123,7 +152,7 @@ async function handleSubmit() {
           <button
             type="submit"
             class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-            :disabled="loading || !email.trim() || !password.trim() || !displayName.trim()"
+            :disabled="loading || !formValid"
           >
             <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
             {{ loading ? 'Registrazione in corso...' : 'Registrati' }}

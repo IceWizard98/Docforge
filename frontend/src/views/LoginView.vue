@@ -57,7 +57,7 @@ async function handleSubmit() {
               id="email"
               v-model="email"
               type="email"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-3 md:py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="nome@esempio.com"
               autocomplete="email"
             />
@@ -71,7 +71,7 @@ async function handleSubmit() {
               id="password"
               v-model="password"
               type="password"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-3 md:py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="••••••••"
               autocomplete="current-password"
             />
@@ -86,8 +86,8 @@ async function handleSubmit() {
 
           <button
             type="submit"
-            class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-            :disabled="loading || !email.trim() || !password.trim()"
+            class="w-full flex items-center justify-center gap-2 px-3 py-3 md:py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            :disabled="loading || !email.trim() || !password.trim() || !emailValid"
           >
             <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
             {{ loading ? 'Accesso in corso...' : 'Accedi' }}
