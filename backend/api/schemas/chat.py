@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from typing import Literal
 
@@ -19,10 +20,10 @@ class ChatSessionCreate(BaseModel):
 class ChatSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    tenant_id: str
-    document_id: str | None = None
-    user_id: str
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    document_id: uuid.UUID | None = None
+    user_id: uuid.UUID
     title: str
     context_type: str
     status: str
@@ -63,8 +64,8 @@ class PatchProposal(BaseModel):
 class ChatMessageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    session_id: str
+    id: uuid.UUID
+    session_id: uuid.UUID
     role: str
     content: str
     actions: list[ActionProposal] = []
@@ -77,10 +78,10 @@ class ChatMessageResponse(BaseModel):
 class ChatSessionDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    tenant_id: str
-    document_id: str | None = None
-    user_id: str
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    document_id: uuid.UUID | None = None
+    user_id: uuid.UUID
     title: str
     context_type: str
     status: str
