@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +17,8 @@ from api.schemas.chat import (
     ChatSessionListResponse,
     ChatSessionResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -132,19 +135,20 @@ async def send_message(
     db_session.add(user_msg)
     await db_session.flush()
 
+    error_state = None
     try:
         provider = get_llm_provider()
         ai_content = await provider.generate(body.content)
     except Exception:
-        ai_content = (
-            "I acknowledge receipt of your message regarding the document. "
-            "Your input has been processed and integrated into the drafting context."
-        )
+        logger.exception("LLM generation failed for session %s", session_id)
+        ai_content = "I'm sorry, I encountered an error processing your request. Please try again."
+        error_state = {"error": "llm_failure", "message": "AI provider unavailable"}
     ai_msg = ChatMessageModel(
         id=uuid.uuid4(),
         session_id=uuid.UUID(session_id),
         role="assistant",
         content=ai_content,
+        sources=[error_state] if error_state else [],
         actions=[
             {
                 "action": "suggest_draft",
