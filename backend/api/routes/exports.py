@@ -6,6 +6,9 @@ from adapters.postgresql.base import get_session
 from adapters.postgresql.models import DocumentModel
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.exports import ExportCreate, ExportResponse
+from workers.export import export_document_task
+
+_EXPORT_STATUS: dict[str, str] = {}
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
@@ -13,7 +16,7 @@ router = APIRouter(prefix="/exports", tags=["exports"])
 @router.post(
     "/documents/{doc_id}/export",
     response_model=ExportResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_export(
     doc_id: str,
@@ -43,40 +46,22 @@ async def create_export(
         event_type="export_created",
         entity_type="document",
         entity_id=doc_id,
-        payload={"format": body.format},
+        payload={"format": body.format, "status": "processing"},
     )
     session.add(audit)
-
-    file_key = f"exports/{doc_id}/{export_id}.{body.format}"
-    from adapters.minio.storage import MinioStorageAdapter
-
-    storage = MinioStorageAdapter()
-
-    if body.format == "pdf":
-        from adapters.export.pdf import document_to_html, export_pdf
-
-        html = document_to_html({"title": doc.title, "content": doc.content})
-        pdf_bytes = export_pdf(html)
-        await storage.upload(file_key, pdf_bytes, "application/pdf")
-    elif body.format == "docx":
-        from adapters.export.docx import export_docx
-
-        docx_bytes = export_docx({"title": doc.title, "content": doc.content})
-        mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        await storage.upload(file_key, docx_bytes, mime)
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported format: {body.format}",
-        )
-
     await session.flush()
+
+    _EXPORT_STATUS[str(export_id)] = "processing"
+
+    doc_data = {"id": doc_id, "title": doc.title, "content": doc.content, "version": doc.version}
+    export_document_task.delay(str(export_id), doc_id, doc_data, body.format)
+
     return ExportResponse(
         id=str(export_id),
         document_id=doc_id,
         format=body.format,
-        status="completed",
-        file_key=file_key,
+        status="processing",
+        file_key=None,
         created_at=audit.created_at,
         updated_at=audit.created_at,
     )
@@ -103,13 +88,18 @@ async def get_export(
     if audit is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
 
-    fmt = (audit.payload or {}).get("format", "pdf")
-    file_key = f"exports/{audit.entity_id}/{export_id}.{fmt}"
+    payload = audit.payload or {}
+    fmt = payload.get("format", "pdf")
+    job_status = payload.get("status", _EXPORT_STATUS.get(export_id, "processing"))
+    file_key = payload.get("file_key", "")
+    if not file_key and job_status == "completed":
+        file_key = f"exports/{audit.entity_id}/{export_id}.{fmt}"
+
     return ExportResponse(
         id=str(audit.id),
         document_id=audit.entity_id,
         format=fmt,
-        status="completed",
+        status=job_status,
         file_key=file_key,
         created_at=audit.created_at,
         updated_at=audit.created_at,
