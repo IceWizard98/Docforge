@@ -56,6 +56,17 @@ export const useDocumentStore = defineStore('document', () => {
     }
   }
 
+  async function saveContent(json: Record<string, unknown>) {
+    const id = currentDocId.value
+    if (!id) return
+    error.value = null
+    try {
+      await apiClient.patch(`/api/documents/${id}`, { content: json })
+    } catch (e: any) {
+      error.value = e?.response?.data?.detail || e.message || 'Failed to save content'
+    }
+  }
+
   async function updateSectionStatus(sectionId: string, newStatus: string) {
     if (!currentDocId.value) return
     error.value = null
@@ -85,5 +96,6 @@ export const useDocumentStore = defineStore('document', () => {
     fetchDocument,
     updateTitle,
     updateSectionStatus,
+    saveContent,
   }
 })

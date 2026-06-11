@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useSuggestionStore } from '@/api/suggestionStore'
+import { useRoute } from 'vue-router'
 import apiClient from '@/api/client'
 import { Check, X, ChevronLeft, ChevronRight, CheckCheck, XCircle, Loader2 } from '@lucide/vue'
 
+const route = useRoute()
 const suggestionStore = useSuggestionStore()
 const persisting = ref<Set<string>>(new Set())
 
@@ -63,7 +65,13 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', handleKeydown))
+onMounted(() => {
+  const docId = route.params.id as string
+  if (docId) {
+    suggestionStore.fetchSuggestions(docId)
+  }
+  window.addEventListener('keydown', handleKeydown)
+})
 onBeforeUnmount(() => window.removeEventListener('keydown', handleKeydown))
 </script>
 

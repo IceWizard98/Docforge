@@ -11,6 +11,66 @@ interface StreamEventHandlers {
   onError?: (error: string) => void
 }
 
+function safeParse(data: string) {
+  try {
+    return JSON.parse(data)
+  } catch {
+    return null
+  }
+}
+
+function parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>, decoder: TextDecoder, handlers: StreamEventHandlers) {
+  let buffer = ''
+
+  async function pump(): Promise<void> {
+    const { done, value } = await reader.read()
+    if (done) {
+      handlers.onDone?.()
+      return
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+
+    let currentEvent = ''
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim()
+      } else if (line.startsWith('data: ')) {
+        const data = safeParse(line.slice(6))
+        if (!data) continue
+
+        switch (currentEvent) {
+          case 'message_chunk':
+            handlers.onMessageChunk?.(data.content)
+            break
+          case 'action_proposed': {
+            const action = data as ChatActionPayload
+            handlers.onActionProposed?.(action)
+            break
+          }
+          case 'section_generated':
+            handlers.onSectionGenerated?.(data)
+            break
+          case 'patch_proposed': {
+            const patch = data as PatchPayload
+            handlers.onPatchProposed?.(patch)
+            break
+          }
+          case 'progress':
+            handlers.onProgress?.(data)
+            break
+        }
+      }
+    }
+
+    await pump()
+  }
+
+  return pump()
+}
+
 export function useChatStream() {
   const messages = ref<ChatMessageResponse[]>([])
   const isStreaming = ref(false)
@@ -18,73 +78,54 @@ export function useChatStream() {
   const actions = ref<ChatActionPayload[]>([])
   const patches = ref<PatchPayload[]>([])
 
-  let eventSource: EventSource | null = null
+  let abortController: AbortController | null = null
   let retryCount = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   const MAX_RETRIES = 5
   const BASE_DELAY = 1000
 
-  function safeParse(data: string) {
-    try {
-      return JSON.parse(data)
-    } catch {
-      return null
-    }
-  }
-
-  function connect(url: string, handlers: StreamEventHandlers = {}) {
+  async function connect(url: string, handlers: StreamEventHandlers = {}) {
     disconnect()
 
     isStreaming.value = true
     streamError.value = null
 
-    eventSource = new EventSource(url, { withCredentials: true })
-
-    eventSource.addEventListener('message_chunk', (e: MessageEvent) => {
-      const data = safeParse(e.data)
-      if (!data) {
-        handlers.onError?.(`Malformed chunk: ${e.data}`)
-        return
-      }
-      handlers.onMessageChunk?.(data.content)
-    })
-
-    eventSource.addEventListener('action_proposed', (e: MessageEvent) => {
-      const data = safeParse(e.data)
-      if (!data) return
-      const action = data as ChatActionPayload
-      actions.value.push(action)
-      handlers.onActionProposed?.(action)
-    })
-
-    eventSource.addEventListener('section_generated', (e: MessageEvent) => {
-      const data = safeParse(e.data)
-      if (!data) return
-      handlers.onSectionGenerated?.(data)
-    })
-
-    eventSource.addEventListener('patch_proposed', (e: MessageEvent) => {
-      const data = safeParse(e.data)
-      if (!data) return
-      const patch = data as PatchPayload
-      patches.value.push(patch)
-      handlers.onPatchProposed?.(patch)
-    })
-
-    eventSource.addEventListener('progress', (e: MessageEvent) => {
-      const data = safeParse(e.data)
-      if (!data) return
-      handlers.onProgress?.(data)
-    })
-
-    eventSource.addEventListener('done', () => {
+    const token = localStorage.getItem('auth_token')
+    if (!token) {
       isStreaming.value = false
-      retryCount = 0
-      handlers.onDone?.()
-    })
+      streamError.value = 'No auth token'
+      handlers.onError?.('Authentication required')
+      return
+    }
 
-    eventSource.onerror = () => {
-      eventSource?.close()
+    abortController = new AbortController()
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        signal: abortController.signal,
+      })
+
+      if (!response.ok) {
+        throw new Error(`SSE connection failed: ${response.status} ${response.statusText}`)
+      }
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+
+      await parseSSEStream(reader, decoder, {
+        ...handlers,
+        onDone: () => {
+          isStreaming.value = false
+          retryCount = 0
+          handlers.onDone?.()
+        },
+      })
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return
+
       if (retryCount < MAX_RETRIES) {
         const delay = BASE_DELAY * Math.pow(2, retryCount)
         retryCount++
@@ -93,15 +134,16 @@ export function useChatStream() {
         }, delay)
       } else {
         isStreaming.value = false
-        streamError.value = 'Connection failed after retries'
-        handlers.onError?.('Connection failed after retries')
+        const msg = err instanceof Error ? err.message : 'Connection failed after retries'
+        streamError.value = msg
+        handlers.onError?.(msg)
       }
     }
   }
 
   function disconnect() {
-    eventSource?.close()
-    eventSource = null
+    abortController?.abort()
+    abortController = null
     if (retryTimer) {
       clearTimeout(retryTimer)
       retryTimer = null

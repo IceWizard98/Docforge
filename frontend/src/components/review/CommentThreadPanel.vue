@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { format } from 'date-fns'
 import { MessageSquare, Check, Reply } from '@lucide/vue'
 import type { Comment } from '@/types/document'
 import EmptyState from '@/components/common/EmptyState.vue'
+
+function formatDate(iso: string) {
+  try {
+    return format(new Date(iso), 'MMM d, HH:mm')
+  } catch {
+    return iso
+  }
+}
 
 const props = defineProps<{
   comments: Comment[]
@@ -64,7 +73,7 @@ async function handleAddReply(commentId: string) {
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-xs font-medium text-foreground">{{ comment.author }}</span>
-                <span class="text-[10px] text-foreground/40">{{ comment.createdAt }}</span>
+                <span class="text-[10px] text-foreground/40">{{ formatDate(comment.createdAt) }}</span>
               </div>
               <p class="text-sm text-foreground/80">{{ comment.text }}</p>
             </div>
@@ -86,7 +95,7 @@ async function handleAddReply(commentId: string) {
             >
               <div class="flex items-center gap-2 mb-0.5">
                 <span class="text-[11px] font-medium text-foreground/60">{{ reply.author }}</span>
-                <span class="text-[10px] text-foreground/40">{{ reply.createdAt }}</span>
+                <span class="text-[10px] text-foreground/40">{{ formatDate(reply.createdAt) }}</span>
               </div>
               <p class="text-xs text-foreground/70">{{ reply.text }}</p>
             </div>

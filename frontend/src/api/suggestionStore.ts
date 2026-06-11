@@ -1,10 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Suggestion } from '@/types/document'
+import apiClient from '@/api/client'
 
 export const useSuggestionStore = defineStore('suggestion', () => {
   const suggestions = ref<Suggestion[]>([])
   const activeIndex = ref(0)
+  const loading = ref(false)
+  const error = ref<string | null>(null)
 
   const pendingSuggestions = computed(() =>
     suggestions.value.filter((s) => s.status === 'pending'),
@@ -93,9 +96,23 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     }
   }
 
+  async function fetchSuggestions(documentId: string) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await apiClient.get(`/patches/${documentId}`)
+      setSuggestions(response.data as Suggestion[])
+    } catch (e: any) {
+      error.value = e?.response?.data?.detail || e.message || 'Failed to fetch suggestions'
+    } finally {
+      loading.value = false
+    }
+  }
+
   function reset() {
     suggestions.value = []
     activeIndex.value = 0
+    error.value = null
   }
 
   return {
@@ -116,6 +133,9 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     rejectAll,
     goNext,
     goPrev,
+    loading,
+    error,
+    fetchSuggestions,
     reset,
   }
 })

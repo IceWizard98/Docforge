@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { FileText, ChevronDown, ChevronRight } from '@lucide/vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import type { SourceRef } from '@/types/document'
 
-interface SourceDoc {
-  id: string
-  title: string
-  type: 'document' | 'clause' | 'template'
-  confidence: number
-  chunks: Array<{ id: string; text: string }>
-}
+const props = defineProps<{
+  sources: SourceRef[]
+}>()
 
-const sources = ref<SourceDoc[]>([])
 const expandedSources = ref<Set<string>>(new Set())
+
+const hasSources = computed(() => props.sources.length > 0)
 
 function toggleSource(id: string) {
   const newSet = new Set(expandedSources.value)
@@ -23,13 +21,11 @@ function toggleSource(id: string) {
   }
   expandedSources.value = newSet
 }
-
-const hasSources = () => sources.value.length > 0
 </script>
 
 <template>
   <div
-    v-if="hasSources()"
+    v-if="hasSources"
     class="border-t border-primary/10 px-4 py-2 max-h-40 overflow-y-auto"
   >
     <h3 class="text-[11px] font-semibold text-foreground/40 uppercase tracking-wider mb-2">
@@ -38,12 +34,12 @@ const hasSources = () => sources.value.length > 0
     <div class="space-y-1">
       <div
         v-for="src in sources"
-        :key="src.id"
+        :key="src.sourceDocId"
         class="rounded-md border border-primary/10 overflow-hidden"
       >
         <button
           class="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left text-foreground/70 hover:bg-primary/5 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-          @click="toggleSource(src.id)"
+          @click="toggleSource(src.sourceDocId)"
         >
           <FileText class="w-3 h-3 text-primary/50 flex-shrink-0" />
           <span class="flex-1 truncate font-medium">{{ src.title }}</span>
@@ -59,16 +55,15 @@ const hasSources = () => sources.value.length > 0
           >
             {{ Math.round(src.confidence * 100) }}%
           </span>
-          <ChevronDown v-if="expandedSources.has(src.id)" class="w-3 h-3 text-foreground/30" />
+          <ChevronDown v-if="expandedSources.has(src.sourceDocId)" class="w-3 h-3 text-foreground/30" />
           <ChevronRight v-else class="w-3 h-3 text-foreground/30" />
         </button>
-        <div v-if="expandedSources.has(src.id)" class="px-3 pb-2 space-y-1">
+        <div v-if="expandedSources.has(src.sourceDocId)" class="px-3 pb-2 space-y-1">
           <p
-            v-for="chunk in src.chunks"
-            :key="chunk.id"
+            v-if="src.text"
             class="text-[11px] text-foreground/50 leading-relaxed"
           >
-            {{ chunk.text }}
+            {{ src.text }}
           </p>
         </div>
       </div>

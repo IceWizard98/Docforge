@@ -25,7 +25,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['vue', 'vue-router', 'pinia', 'axios'],
-          editor: ['@tiptap/core', '@tiptap/vue-3', '@tiptap/starter-kit', '@tiptap/pm'],
+          editor: ['@tiptap/core', '@tiptap/vue-3', '@tiptap/starter-kit'],
           lucide: ['@lucide/vue'],
         },
       },
