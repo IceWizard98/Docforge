@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     otel_service_name: str = "docforge"
     enable_otel: bool = False
+    tesseract_cmd: str = "tesseract"
 
 
 @lru_cache
