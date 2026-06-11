@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { Bot, User, Check, X, ExternalLink } from '@lucide/vue'
 import type { ChatMessageResponse, ChatActionPayload, PatchPayload, SourceRef } from '@/types/document'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const props = defineProps<{
   message: ChatMessageResponse
@@ -15,6 +17,13 @@ const isUser = computed(() => props.message.role === 'user')
 const hasActions = computed(() => (props.message.actions?.length || 0) > 0)
 const hasPatches = computed(() => (props.message.patches?.length || 0) > 0)
 const hasSources = computed(() => (props.message.sources?.length || 0) > 0)
+
+const renderedContent = computed(() => {
+  const text = props.message.content || ''
+  if (!text) return ''
+  const raw = marked.parse(text, { async: false }) as string
+  return DOMPurify.sanitize(raw)
+})
 
 function handleAction(action: ChatActionPayload) {
   emit('action', action)
@@ -41,9 +50,17 @@ function handleAction(action: ChatActionPayload) {
         class="px-3 py-2 rounded-lg text-sm leading-relaxed"
         :class="isUser ? 'bg-primary text-white rounded-tr-sm' : 'bg-surface border border-primary/10 rounded-tl-sm'"
       >
-        <p class="whitespace-pre-wrap" :class="isUser ? 'text-white' : 'text-foreground'">
+        <div
+          v-if="isUser"
+          class="whitespace-pre-wrap text-white"
+        >
           {{ message.content }}
-        </p>
+        </div>
+        <div
+          v-else
+          class="prose prose-sm max-w-none text-foreground prose-headings:text-foreground prose-a:text-primary prose-code:bg-primary/10 prose-code:text-primary prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-surface prose-pre:border prose-pre:border-primary/10 prose-li:text-foreground prose-strong:text-foreground"
+          v-html="renderedContent"
+        />
       </div>
 
       <!-- Action buttons -->
