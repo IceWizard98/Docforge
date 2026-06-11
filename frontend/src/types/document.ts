@@ -132,6 +132,22 @@ export interface ValidationIssue {
   rule?: string
 }
 
+export interface ChatSessionListItem {
+  id: string
+  title: string
+  lastMessagePreview: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ChatSessionDetailResponse {
+  id: string
+  title: string
+  messages: ChatMessageResponse[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface EditorContext {
   activeSectionId: string | null
   activeClauseId: string | null

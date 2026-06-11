@@ -8,6 +8,8 @@ import type {
   PatchPayload,
   SourceRef,
   EditorContext,
+  ChatSessionListItem,
+  ChatSessionDetailResponse,
 } from '@/types/document'
 
 let isRefreshing = false
@@ -140,7 +142,7 @@ export async function register(
 export async function uploadDocument(file: File): Promise<DocumentResponse> {
   const formData = new FormData()
   formData.append('file', file)
-  const response = await apiClient.post<DocumentResponse>('/documents', formData, {
+  const response = await apiClient.post<DocumentResponse>('/documents/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   return response.data
@@ -199,6 +201,44 @@ export async function sendMessage(
 
 export function getStreamUrl(sessionId: string): string {
   return `/api/v1/chat/sessions/${sessionId}/stream`
+}
+
+export async function listChatSessions(documentId: string): Promise<ChatSessionListItem[]> {
+  const response = await apiClient.get<{ data: ChatSessionListItem[] }>(`/chat/sessions`, {
+    params: { document_id: documentId },
+  })
+  return response.data.data
+}
+
+export async function getChatSession(sessionId: string): Promise<ChatSessionDetailResponse> {
+  const response = await apiClient.get<ChatSessionDetailResponse>(`/chat/sessions/${sessionId}`)
+  return response.data
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  await apiClient.delete(`/chat/sessions/${sessionId}`)
+}
+
+export async function updateChatSession(sessionId: string, title: string): Promise<void> {
+  await apiClient.patch(`/chat/sessions/${sessionId}`, { title })
+}
+
+export async function sendMessageWithAttachment(
+  sessionId: string,
+  content: string,
+  files: File[],
+  context?: EditorContext,
+): Promise<SendMessageResponse> {
+  const formData = new FormData()
+  formData.append('content', content)
+  files.forEach((file) => formData.append('files', file))
+  if (context) {
+    formData.append('context', JSON.stringify(context))
+  }
+  const response = await apiClient.post<SendMessageResponse>(`/chat/sessions/${sessionId}/messages/with-files`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return response.data
 }
 
 export default apiClient

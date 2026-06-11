@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { FileText, Plus, Clock, FileText as FileTextIcon } from '@lucide/vue'
-import { listDocuments, createDocument } from '@/api/client'
+import { FileText, Plus, Clock, Upload, Loader2, FileText as FileTextIcon } from '@lucide/vue'
+import { listDocuments, createDocument, uploadDocument } from '@/api/client'
 import type { DocumentResponse } from '@/types/document'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -13,6 +13,16 @@ const documents = ref<DocumentResponse[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const creating = ref(false)
+const uploading = ref(false)
+
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const dropZoneActive = ref(false)
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
 
 async function fetchDocs() {
   loading.value = true
@@ -41,6 +51,54 @@ async function createNew() {
   } finally {
     creating.value = false
   }
+}
+
+function openFilePicker() {
+  fileInputRef.value?.click()
+}
+
+async function handleFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  await uploadFile(file)
+  input.value = ''
+}
+
+async function uploadFile(file: File) {
+  uploading.value = true
+  error.value = null
+  try {
+    const doc = await uploadDocument(file)
+    await fetchDocs()
+    router.push(`/documents/${doc.id}`)
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || e.message || 'Upload fallito'
+  } finally {
+    uploading.value = false
+  }
+}
+
+function onDragEnter(e: DragEvent) {
+  e.preventDefault()
+  dropZoneActive.value = true
+}
+
+function onDragOver(e: DragEvent) {
+  e.preventDefault()
+  dropZoneActive.value = true
+}
+
+function onDragLeave(e: DragEvent) {
+  e.preventDefault()
+  dropZoneActive.value = false
+}
+
+function onDrop(e: DragEvent) {
+  e.preventDefault()
+  dropZoneActive.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) uploadFile(file)
 }
 
 function formatDate(dateStr: string): string {
@@ -81,8 +139,21 @@ onMounted(fetchDocs)
       @action="createNew"
     />
 
-    <!-- Document list -->
-    <div v-if="!loading && documents.length > 0" class="flex-1 overflow-y-auto">
+    <!-- Document list with drag-drop zone -->
+    <div
+      class="flex-1 overflow-y-auto relative"
+      @dragenter="onDragEnter"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
+    >
+      <div
+        v-if="dropZoneActive"
+        class="absolute inset-0 z-10 flex items-center justify-center bg-primary/5 border-2 border-dashed border-primary/40 rounded-lg m-2"
+      >
+        <p class="text-sm font-medium text-primary">Drop file here</p>
+      </div>
+
       <button
         v-for="doc in documents"
         :key="doc.id"
@@ -112,14 +183,31 @@ onMounted(fetchDocs)
       </button>
     </div>
 
-    <!-- Create button -->
-    <div class="p-3 border-t border-primary/10">
+    <!-- Bottom actions -->
+    <div class="p-3 border-t border-primary/10 flex gap-2">
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept=".pdf,.docx,.txt,.md"
+        class="hidden"
+        @change="handleFileSelected"
+      />
       <button
-        class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+        class="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+        :disabled="creating"
         @click="createNew"
       >
         <Plus class="w-4 h-4" />
-        Nuovo documento
+        Nuovo
+      </button>
+      <button
+        class="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-primary/20 text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+        :disabled="uploading"
+        @click="openFilePicker"
+      >
+        <Upload v-if="!uploading" class="w-4 h-4" />
+        <Loader2 v-else class="w-4 h-4 animate-spin" />
+        {{ uploading ? 'Uploading...' : 'Upload' }}
       </button>
     </div>
   </aside>
