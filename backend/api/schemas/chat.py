@@ -62,6 +62,7 @@ class ChatMessageRequest(BaseModel):
 
 class SourceCitationResponse(BaseModel):
     doc_id: str
+    title: str = ""
     chunk_id: str | None = None
     snippet: str | None = None
     confidence: float = 0.0

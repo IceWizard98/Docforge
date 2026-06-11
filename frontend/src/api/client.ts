@@ -187,6 +187,16 @@ export interface SendMessageResponse {
   timestamp: string
 }
 
+function mapSource(src: any): SourceRef {
+  return {
+    sourceDocId: src.doc_id ?? src.sourceDocId ?? '',
+    title: src.title ?? '',
+    snippet: src.snippet ?? src.text ?? undefined,
+    chunkId: src.chunk_id ?? src.chunkId ?? undefined,
+    confidence: src.confidence ?? 0,
+  }
+}
+
 export async function sendMessage(
   sessionId: string,
   content: string,
@@ -196,7 +206,11 @@ export async function sendMessage(
     content,
     context,
   })
-  return response.data
+  const data = response.data
+  if (data.sources) {
+    data.sources = data.sources.map(mapSource)
+  }
+  return data
 }
 
 export function getStreamUrl(sessionId: string): string {
@@ -212,7 +226,14 @@ export async function listChatSessions(documentId: string): Promise<ChatSessionL
 
 export async function getChatSession(sessionId: string): Promise<ChatSessionDetailResponse> {
   const response = await apiClient.get<ChatSessionDetailResponse>(`/chat/sessions/${sessionId}`)
-  return response.data
+  const data = response.data
+  if (data.messages) {
+    data.messages = data.messages.map((msg: any) => ({
+      ...msg,
+      sources: msg.sources ? msg.sources.map(mapSource) : undefined,
+    }))
+  }
+  return data
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
@@ -238,7 +259,11 @@ export async function sendMessageWithAttachment(
   const response = await apiClient.post<SendMessageResponse>(`/chat/sessions/${sessionId}/messages/with-files`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
-  return response.data
+  const data = response.data
+  if (data.sources) {
+    data.sources = data.sources.map(mapSource)
+  }
+  return data
 }
 
 export async function saveDocumentVersion(documentId: string): Promise<DocumentResponse> {

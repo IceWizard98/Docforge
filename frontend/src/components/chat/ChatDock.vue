@@ -34,6 +34,8 @@ interface ChatMessage {
   timestamp: string
 }
 
+const currentSources = ref<SourceRef[]>([])
+
 const messages = ref<ChatMessage[]>([])
 
 const sessions = ref<ChatSessionListItem[]>([])
@@ -113,11 +115,13 @@ async function send() {
   try {
     const response = await sendMessageInternal(text)
     if (response.role === 'assistant') {
+      currentSources.value = response.sources || []
       messages.value.push({
         id: response.id,
         role: 'assistant',
         content: response.content,
         actions: response.actions as ChatActionPayload[] | undefined,
+        sources: response.sources || [],
         timestamp: response.timestamp,
       })
     }
@@ -161,11 +165,13 @@ async function handleAction(action: ChatActionPayload) {
   try {
     const response = await sendMessageInternal(contextMessage)
     if (response.role === 'assistant') {
+      currentSources.value = response.sources || []
       messages.value.push({
         id: response.id,
         role: 'assistant',
         content: response.content,
         actions: response.actions as ChatActionPayload[] | undefined,
+        sources: response.sources || [],
         timestamp: response.timestamp,
       })
     }
@@ -208,7 +214,7 @@ async function selectSession(sid: string) {
   try {
     const detail = await getChatSession(sid)
     sessionId.value = detail.id
-    messages.value = detail.messages.map((m) => ({
+    const msgs = detail.messages.map((m) => ({
       id: m.id,
       role: m.role,
       content: m.content,
@@ -217,6 +223,9 @@ async function selectSession(sid: string) {
       sources: m.sources as SourceRef[] | undefined,
       timestamp: m.timestamp,
     }))
+    messages.value = msgs
+    const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant')
+    currentSources.value = (lastAssistant?.sources as SourceRef[]) || []
   } catch (err: any) {
     error.value = err?.response?.data?.detail || err.message || 'Failed to load session'
   } finally {
@@ -228,6 +237,7 @@ async function newSession() {
   sessionsOpen.value = false
   sessionId.value = null
   messages.value = []
+  currentSources.value = []
   attachedFiles.value = []
   error.value = null
   await ensureSession()
@@ -390,7 +400,7 @@ onMounted(() => {
     </div>
 
     <!-- Source context -->
-    <SourceContextPanel :sources="[]" />
+    <SourceContextPanel :sources="currentSources" />
 
     <!-- Input area -->
     <div class="border-t border-primary/10 p-3">

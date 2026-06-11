@@ -265,8 +265,10 @@ Content (first 3000 chars):
         '{',
         '  "reply": "Testo della risposta...",',
         '  "action": null | {"type": "...", "label": "...", "params": {}},',
-        '  "sources": [{"doc_id": "...", "chunk_id": null, "snippet": null, "confidence": 0.0}]',
-        '}',
+'  "sources": [{"doc_id": "...", "title": "Document Title",',
+'               "chunk_id": null, "snippet": null,',
+'               "confidence": 0.0}]',
+'}',
     ]
     system_prompt = "\n".join(system_prompt_parts)
 

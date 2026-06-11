@@ -21,8 +21,8 @@ export interface OutlineEntry {
 export interface SourceRef {
   sourceDocId: string
   title: string
+  snippet?: string
   chunkId?: string
-  text?: string
   confidence: number
 }
 
