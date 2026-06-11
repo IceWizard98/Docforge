@@ -3,6 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+from adapters.redis.client import RedisClient
 from config.settings import get_settings
 
 
@@ -15,11 +16,53 @@ class AuthUser(BaseModel):
 
 security = HTTPBearer(auto_error=False)
 
-BLACKLISTED_TOKENS: set[str] = set()
+
+async def blacklist_token(token: str, ttl: int = 3600) -> None:
+    redis = await RedisClient.get_client()
+    payload = jwt.decode(
+        token,
+        get_settings().jwt_secret,
+        algorithms=[get_settings().jwt_algorithm],
+        options={"verify_exp": False},
+    )
+    jti = payload.get("jti", token)
+    await redis.sadd("token_blacklist", jti)
+    await redis.expire("token_blacklist", ttl)
 
 
-def blacklist_token(token: str) -> None:
-    BLACKLISTED_TOKENS.add(token)
+async def blacklist_user_tokens(user_id: str, ttl: int = 3600) -> None:
+    redis = await RedisClient.get_client()
+    key = f"user:{user_id}:tokens"
+    members = await redis.smembers(key)
+    if members:
+        for jti in members:
+            await redis.sadd("token_blacklist", jti)
+        await redis.expire("token_blacklist", ttl)
+    await redis.delete(key)
+
+
+async def _decode_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(
+            token,
+            get_settings().jwt_secret,
+            algorithms=[get_settings().jwt_algorithm],
+        )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    redis = await RedisClient.get_client()
+    jti = payload.get("jti", token)
+    if await redis.sismember("token_blacklist", jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload
 
 
 async def get_current_user(
@@ -33,48 +76,30 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     token = credentials.credentials
-    if token in BLACKLISTED_TOKENS:
+    payload = await _decode_token(token)
+    user_id = payload.get("sub")
+    tenant_id = payload.get("tenant_id")
+    role = payload.get("role")
+    email = payload.get("email")
+    token_type = payload.get("token_type")
+    if user_id is None or tenant_id is None or role is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Invalid token payload",
         )
-    settings = get_settings()
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        )
-        user_id = payload.get("sub")
-        tenant_id = payload.get("tenant_id")
-        role = payload.get("role")
-        email = payload.get("email")
-        token_type = payload.get("token_type")
-        if user_id is None or tenant_id is None or role is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-            )
-        if token_type != "access":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type for this endpoint",
-            )
-        request.state.user = payload
-        request.state.tenant_id = tenant_id
-        return AuthUser(
-            user_id=str(user_id),
-            tenant_id=str(tenant_id),
-            role=str(role),
-            email=str(email) if email else None,
-        )
-    except JWTError:
+    if token_type != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Invalid token type for this endpoint",
         )
+    request.state.user = payload
+    request.state.tenant_id = tenant_id
+    return AuthUser(
+        user_id=str(user_id),
+        tenant_id=str(tenant_id),
+        role=str(role),
+        email=str(email) if email else None,
+    )
 
 
 def require_role(required_role: str):
