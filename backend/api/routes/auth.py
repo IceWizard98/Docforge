@@ -1,6 +1,7 @@
-import time
-from collections import defaultdict
+import logging
+import uuid
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
@@ -11,42 +12,64 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from adapters.postgresql.base import get_session
 from adapters.postgresql.models import TenantModel, UserModel
 from adapters.postgresql.repositories import TenantRepository, UserRepository
-from api.middleware.auth import blacklist_token
+from adapters.redis.client import RedisClient
+from api.middleware.auth import (
+    _decode_token,
+    blacklist_token,
+)
 from api.schemas.auth import (
+    ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
+    ResetPasswordRequest,
     TenantResponse,
     TokenResponse,
     UserResponse,
+    VerifyEmailRequest,
 )
 from config.settings import get_settings
 from core.models.tenant import Tenant, User, UserRole
 
+logger = logging.getLogger("docforge")
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-RATE_LIMIT_STORE: dict[str, list[float]] = defaultdict(list)
 
-
-def _check_rate_limit(ip: str, max_attempts: int = 5, window_seconds: int = 60) -> None:
-    now = time.time()
-    window_start = now - window_seconds
-    RATE_LIMIT_STORE[ip] = [t for t in RATE_LIMIT_STORE[ip] if t > window_start]
-    if len(RATE_LIMIT_STORE[ip]) >= max_attempts:
+async def _check_rate_limit_redis(
+    redis_key: str, max_requests: int = 5, window: int = 60
+) -> None:
+    redis = await RedisClient.get_client()
+    key = f"rate_limit:{redis_key}"
+    current = await redis.incr(key)
+    if current == 1:
+        await redis.expire(key, window)
+    if current > max_requests:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many requests. Please try again later.",
         )
-    RATE_LIMIT_STORE[ip].append(now)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    host = request.client.host if request.client else "127.0.0.1"
+    return host
 
 
 def create_access_token(data: dict) -> str:
     settings = get_settings()
     to_encode = data.copy()
     expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_expiration_minutes)
-    to_encode.update({"exp": expire, "token_type": "access"})
+    to_encode.update({
+        "exp": expire,
+        "token_type": "access",
+        "jti": str(uuid.uuid4()),
+    })
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -54,12 +77,23 @@ def create_refresh_token(data: dict) -> str:
     settings = get_settings()
     to_encode = data.copy()
     expire = datetime.now(UTC) + timedelta(days=30)
-    to_encode.update({"exp": expire, "token_type": "refresh"})
+    to_encode.update({
+        "exp": expire,
+        "token_type": "refresh",
+        "jti": str(uuid.uuid4()),
+    })
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
+async def register(
+    body: RegisterRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    ip = _client_ip(request)
+    await _check_rate_limit_redis(f"register:{ip}")
+
     tenant_repo = TenantRepository(session)
     user_repo = UserRepository(session)
 
@@ -83,6 +117,20 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
         role=UserRole.EDITOR,
     )
     user_model = await user_repo.create(user, password_hash)
+
+    user_model.email_verified = False
+
+    verify_token = str(uuid.uuid4())
+    redis = await RedisClient.get_client()
+    await redis.setex(
+        f"email_verify:{verify_token}",
+        86400,
+        str(user_model.id),
+    )
+    logger.info("Email verification token generated", extra={
+        "user_id": str(user_model.id),
+        "verify_token": verify_token,
+    })
 
     token = create_access_token({
         "sub": str(user_model.id),
@@ -114,7 +162,8 @@ async def login(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    ip = _client_ip(request)
+    await _check_rate_limit_redis(f"login:{ip}")
 
     settings = get_settings()
     query = select(UserModel).where(UserModel.email == body.email)
@@ -165,56 +214,166 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)):
+async def refresh(
+    body: RefreshRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    ip = _client_ip(request)
+    await _check_rate_limit_redis(f"refresh:{ip}")
+
     settings = get_settings()
     token = body.refresh_token
-    from api.middleware.auth import BLACKLISTED_TOKENS
-    if token in BLACKLISTED_TOKENS:
+    payload = await _decode_token(token)
+    token_type = payload.get("token_type")
+    if token_type != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
+            detail="Invalid token type for refresh",
         )
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        )
-        user_id = payload.get("sub")
-        tenant_id = payload.get("tenant_id")
-        role = payload.get("role")
-        token_type = payload.get("token_type")
-        if not user_id or not tenant_id or not role:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token",
-            )
-        if token_type != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type for refresh",
-            )
-        access_token = create_access_token({
-            "sub": user_id,
-            "tenant_id": tenant_id,
-            "role": role,
-            "email": payload.get("email"),
-        })
-        return TokenResponse(
-            access_token=access_token,
-            expires_in=settings.jwt_expiration_minutes * 60,
-        )
-    except JWTError:
+    user_id = payload.get("sub")
+    tenant_id = payload.get("tenant_id")
+    role = payload.get("role")
+    if not user_id or not tenant_id or not role:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
+            detail="Invalid refresh token",
         )
+    access_token = create_access_token({
+        "sub": user_id,
+        "tenant_id": tenant_id,
+        "role": role,
+        "email": payload.get("email"),
+    })
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=settings.jwt_expiration_minutes * 60,
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(request: Request):
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        blacklist_token(token)
+        access_token = auth_header[7:]
+        settings = get_settings()
+        try:
+            payload = jwt.decode(
+                access_token,
+                settings.jwt_secret,
+                algorithms=[settings.jwt_algorithm],
+            )
+            jti = payload.get("jti", access_token)
+            await blacklist_token(access_token)
+            user_id = payload.get("sub")
+            if user_id:
+                redis = await RedisClient.get_client()
+                await redis.sadd(f"user:{user_id}:tokens", jti)
+                await redis.expire(f"user:{user_id}:tokens", 3600)
+        except JWTError:
+            logger.warning("Logout with invalid token")
     return {"detail": "Logged out successfully"}
+
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    ip = _client_ip(request)
+    await _check_rate_limit_redis(f"forgot_password:{ip}", max_requests=3, window=3600)
+
+    result = await session.execute(
+        select(UserModel).where(UserModel.email == body.email)
+    )
+    user_model = result.scalar_one_or_none()
+
+    if not user_model:
+        return {"detail": "If the email exists, a password reset link has been sent."}
+
+    reset_token = str(uuid.uuid4())
+    redis = await RedisClient.get_client()
+    await redis.setex(
+        f"password_reset:{reset_token}",
+        3600,
+        str(user_model.id),
+    )
+
+    logger.info("Password reset token generated", extra={
+        "user_id": str(user_model.id),
+        "email": body.email,
+        "reset_token": reset_token,
+    })
+
+    return {"detail": "If the email exists, a password reset link has been sent."}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(
+    body: ResetPasswordRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    ip = _client_ip(request)
+    await _check_rate_limit_redis(f"reset_password:{ip}", max_requests=3, window=3600)
+
+    redis = await RedisClient.get_client()
+    user_id = await redis.get(f"password_reset:{body.token}")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    result = await session.execute(
+        select(UserModel).where(UserModel.id == UUID(user_id))
+    )
+    user_model = result.scalar_one_or_none()
+    if not user_model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User not found",
+        )
+
+    user_model.password_hash = pbkdf2_sha256.hash(body.password)
+    await session.flush()
+
+    await redis.delete(f"password_reset:{body.token}")
+
+    logger.info("Password reset successful", extra={"user_id": user_id})
+
+    return {"detail": "Password reset successfully."}
+
+
+@router.post("/verify-email", status_code=status.HTTP_200_OK)
+async def verify_email(
+    body: VerifyEmailRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    redis = await RedisClient.get_client()
+    user_id = await redis.get(f"email_verify:{body.token}")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token",
+        )
+
+    result = await session.execute(
+        select(UserModel).where(UserModel.id == UUID(user_id))
+    )
+    user_model = result.scalar_one_or_none()
+    if not user_model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User not found",
+        )
+
+    user_model.email_verified = True
+    await session.flush()
+
+    await redis.delete(f"email_verify:{body.token}")
+
+    logger.info("Email verified successfully", extra={"user_id": user_id})
+
+    return {"detail": "Email verified successfully."}

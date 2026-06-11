@@ -49,3 +49,16 @@ class RegisterResponse(BaseModel):
     user: UserResponse
     tenant: TenantResponse
     token: str = ""
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
