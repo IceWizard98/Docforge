@@ -1,11 +1,16 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import DraftModel
+from adapters.postgresql.models import ChatMessageModel, DraftModel
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.drafts import DraftCreate, DraftResponse, SectionRegenerateRequest
+from workers.drafting import generate_draft_task, generate_section_task
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
 
@@ -46,6 +51,25 @@ async def start_draft(
     )
     session.add(model)
     await session.flush()
+
+    msg_result = await session.execute(
+        select(ChatMessageModel)
+        .where(ChatMessageModel.session_id == uuid.UUID(body.chat_session_id))
+        .order_by(ChatMessageModel.created_at)
+    )
+    messages = [
+        {"role": m.role, "content": m.content}
+        for m in msg_result.scalars().all()
+    ]
+    generate_draft_task.delay(
+        chat_session_id=body.chat_session_id,
+        messages=messages,
+        document_id=body.document_id,
+    )
+    logger.info(
+        "Draft %s generation dispatched for session %s by user %s",
+        str(draft_id), body.chat_session_id, current_user.user_id,
+    )
     return DraftResponse.model_validate(model)
 
 
@@ -69,7 +93,7 @@ async def get_draft(
     return DraftResponse.model_validate(model)
 
 
-@router.post("/{draft_id}/sections/{section_id}/regenerate", response_model=DraftResponse)
+@router.post("/{draft_id}/sections/{section_id}/regenerate", status_code=status.HTTP_202_ACCEPTED)
 async def regenerate_section(
     draft_id: str,
     section_id: str,
@@ -89,17 +113,14 @@ async def regenerate_section(
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
 
-    content = dict(model.content) if model.content else {}
-    sections = content.get("sections", [])
-    updated = False
-    for sec in sections:
-        if sec.get("section_id") == section_id:
-            sec["status"] = "regenerating"
-            updated = True
-            break
-    if not updated:
-        sections.append({"section_id": section_id, "status": "regenerating", "content": ""})
-    content["sections"] = sections
-    model.content = content
-    await session.flush()
-    return DraftResponse.model_validate(model)
+    generate_section_task.delay(
+        draft_id=str(model.id),
+        section_id=section_id,
+        spec=dict(model.spec or {}),
+        context_pack={},
+    )
+    logger.info(
+        "Section %s regeneration dispatched for draft %s by user %s",
+        section_id, draft_id, current_user.user_id,
+    )
+    return {"status": "dispatched", "message": "Section regeneration dispatched"}
