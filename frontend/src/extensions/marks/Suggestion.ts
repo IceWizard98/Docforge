@@ -19,6 +19,36 @@ declare module '@tiptap/core' {
   }
 }
 
+interface MarkRange {
+  from: number
+  to: number
+  type: string
+}
+
+function collectMarkRanges(
+  doc: import('prosemirror-model').Node,
+  markType: import('prosemirror-model').MarkType,
+  suggestionId: string,
+): MarkRange[] {
+  const ranges: MarkRange[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isText) return
+    node.marks.forEach((mark) => {
+      if (
+        mark.type === markType &&
+        mark.attrs.suggestionId === suggestionId
+      ) {
+        ranges.push({
+          from: pos,
+          to: pos + node.nodeSize,
+          type: mark.attrs.type as string,
+        })
+      }
+    })
+  })
+  return ranges
+}
+
 export const Suggestion = Mark.create<SuggestionOptions>({
   name: 'suggestion',
   group: 'annotation',
@@ -42,7 +72,13 @@ export const Suggestion = Mark.create<SuggestionOptions>({
   },
 
   renderHTML({ mark }) {
-    const { type } = mark.attrs
+    const { type, status } = mark.attrs
+    if (status === 'accepted') {
+      return ['span', mergeAttributes({ 'data-suggestion': 'accepted' }), 0]
+    }
+    if (status === 'rejected') {
+      return ['span', mergeAttributes({ 'data-suggestion': 'rejected', style: 'display: none;' }), 0]
+    }
     let style = ''
     if (type === 'insert') {
       style = 'border-bottom: 2px solid var(--color-cta); text-decoration: none;'
@@ -51,7 +87,7 @@ export const Suggestion = Mark.create<SuggestionOptions>({
     } else if (type === 'replace') {
       style = 'text-decoration: underline wavy var(--color-warning); text-underline-offset: 3px;'
     }
-    return ['span', mergeAttributes({ 'data-suggestion': '', style }), 0]
+    return ['span', mergeAttributes({ 'data-suggestion': 'pending', style }), 0]
   },
 
   addCommands() {
@@ -66,56 +102,46 @@ export const Suggestion = Mark.create<SuggestionOptions>({
         (attrs) =>
         ({ tr, state, dispatch }) => {
           const markType = state.schema.marks[this.name]
-          let updated = false
+          const ranges = collectMarkRanges(state.doc, markType, attrs.suggestionId)
+          if (ranges.length === 0) return false
 
-          state.doc.descendants((node, pos) => {
-            node.marks.forEach((mark) => {
-              if (
-                mark.type === markType &&
-                mark.attrs.suggestionId === attrs.suggestionId &&
-                mark.attrs.status !== 'accepted'
-              ) {
-                const newMark = markType.create(Object.assign({}, mark.attrs, { status: 'accepted' }))
-                tr.removeMark(pos, pos + node.nodeSize, markType)
-                tr.addMark(pos, pos + node.nodeSize, newMark)
-                updated = true
-              }
-            })
-          })
+          ranges.sort((a, b) => b.from - a.from)
 
-          if (updated && dispatch) {
-            dispatch(tr)
-            return true
+          for (const { from, to, type } of ranges) {
+            if (type === 'delete') {
+              tr.delete(from, to)
+            } else {
+              tr.removeMark(from, to, markType)
+            }
           }
-          return false
+
+          if (dispatch) {
+            dispatch(tr)
+          }
+          return true
         },
 
       rejectSuggestion:
         (attrs) =>
         ({ tr, state, dispatch }) => {
           const markType = state.schema.marks[this.name]
-          let updated = false
+          const ranges = collectMarkRanges(state.doc, markType, attrs.suggestionId)
+          if (ranges.length === 0) return false
 
-          state.doc.descendants((node, pos) => {
-            node.marks.forEach((mark) => {
-              if (
-                mark.type === markType &&
-                mark.attrs.suggestionId === attrs.suggestionId &&
-                mark.attrs.status !== 'rejected'
-              ) {
-                const newMark = markType.create(Object.assign({}, mark.attrs, { status: 'rejected' }))
-                tr.removeMark(pos, pos + node.nodeSize, markType)
-                tr.addMark(pos, pos + node.nodeSize, newMark)
-                updated = true
-              }
-            })
-          })
+          ranges.sort((a, b) => b.from - a.from)
 
-          if (updated && dispatch) {
-            dispatch(tr)
-            return true
+          for (const { from, to, type } of ranges) {
+            if (type === 'insert') {
+              tr.delete(from, to)
+            } else {
+              tr.removeMark(from, to, markType)
+            }
           }
-          return false
+
+          if (dispatch) {
+            dispatch(tr)
+          }
+          return true
         },
 
       unsetSuggestion:

@@ -2,8 +2,12 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useSuggestionStore } from '@/api/suggestionStore'
 import { useRoute } from 'vue-router'
-import apiClient from '@/api/client'
+import type { Editor } from '@tiptap/core'
 import { Check, X, ChevronLeft, ChevronRight, CheckCheck, XCircle, Loader2 } from '@lucide/vue'
+
+const props = defineProps<{
+  editor: { value: Editor | null }
+}>()
 
 const route = useRoute()
 const suggestionStore = useSuggestionStore()
@@ -30,11 +34,18 @@ const suggestionTypeLabel = computed(() => {
 async function persistDecision(suggestionId: string, decision: 'accepted' | 'rejected') {
   persisting.value.add(suggestionId)
   try {
-    await apiClient.patch(`/api/suggestions/${suggestionId}`, { status: decision })
+    const editor = props.editor.value
+    if (editor) {
+      if (decision === 'accepted') {
+        editor.commands.acceptSuggestion({ suggestionId })
+      } else {
+        editor.commands.rejectSuggestion({ suggestionId })
+      }
+    }
     if (decision === 'accepted') {
-      suggestionStore.acceptSuggestion(suggestionId)
+      await suggestionStore.acceptSuggestion(suggestionId)
     } else {
-      suggestionStore.rejectSuggestion(suggestionId)
+      await suggestionStore.rejectSuggestion(suggestionId)
     }
   } catch {
   } finally {

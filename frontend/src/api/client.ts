@@ -270,4 +270,14 @@ export async function resolveComment(commentId: string): Promise<any> {
   return response.data
 }
 
+export async function acceptPatchOperation(patchId: string, operationId: string): Promise<any> {
+  const response = await apiClient.post(`/patches/${patchId}/operations/${operationId}/accept`)
+  return response.data
+}
+
+export async function rejectPatchOperation(patchId: string, operationId: string): Promise<any> {
+  const response = await apiClient.post(`/patches/${patchId}/operations/${operationId}/reject`)
+  return response.data
+}
+
 export default apiClient

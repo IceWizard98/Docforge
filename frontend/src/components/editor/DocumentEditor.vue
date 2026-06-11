@@ -211,7 +211,7 @@ async function saveVersion() {
       </div>
 
       <!-- Review mode bottom bar -->
-      <SuggestionReviewBar v-if="isReviewMode" />
+      <SuggestionReviewBar v-if="isReviewMode" :editor="editorProp" />
     </main>
 
     <!-- Right Sidebar: Diff Inspector -->
