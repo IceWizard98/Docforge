@@ -82,20 +82,24 @@ class DocumentRepository:
         await self.session.flush()
         return model
 
-    async def get_by_id(self, doc_id: str, tenant_id: str) -> DocumentModel | None:
-        result = await self.session.execute(
-            select(DocumentModel).where(
-                DocumentModel.id == _ensure_uuid(doc_id),
-                DocumentModel.tenant_id == _ensure_uuid(tenant_id),
-            )
+    async def get_by_id(
+        self, doc_id: str, tenant_id: str, include_archived: bool = False
+    ) -> DocumentModel | None:
+        query = select(DocumentModel).where(
+            DocumentModel.id == _ensure_uuid(doc_id),
+            DocumentModel.tenant_id == _ensure_uuid(tenant_id),
         )
+        if not include_archived:
+            query = query.where(DocumentModel.status != "archived")
+        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def get_by_tenant(
         self, tenant_id: str, page: int = 1, per_page: int = 20
     ) -> tuple[list[DocumentModel], int]:
         base = select(DocumentModel).where(
-            DocumentModel.tenant_id == _ensure_uuid(tenant_id)
+            DocumentModel.tenant_id == _ensure_uuid(tenant_id),
+            DocumentModel.status != "archived",
         )
         total = await self.session.scalar(select(func.count()).select_from(base.subquery())) or 0
         offset = (page - 1) * per_page
@@ -121,10 +125,9 @@ class DocumentRepository:
         return model
 
     async def delete(self, doc_id: str, tenant_id: str) -> bool:
-        # TODO: implement soft-delete (status='deleted') instead of hard delete
         model = await self.get_by_id(doc_id, tenant_id)
         if model is None:
             return False
-        await self.session.delete(model)
+        model.status = "archived"
         await self.session.flush()
         return True
