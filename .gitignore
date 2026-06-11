@@ -30,3 +30,6 @@ htmlcov/
 *.whl
 *.tar.gz
 docs/superpowers/plans/
+AGENTS.md
+CLAUDE.md
+diary.md
