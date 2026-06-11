@@ -2,7 +2,8 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +57,33 @@ async def create_session(
         context_type=body.context_type,
     )
     session.add(model)
+    await session.flush()
+
+    system_msg = ChatMessageModel(
+        id=uuid.uuid4(),
+        session_id=chat_id,
+        role="system",
+        content=(
+            "Sei un assistente specializzato nella creazione e revisione di "
+            "documenti professionali. "
+            "Il tuo nome è DocForge AI. "
+            "Puoi aiutare l'utente a:"
+            "\n- Scrivere e modificare documenti"
+            "\n- Suggerire miglioramenti e modifiche"
+            "\n- Generare bozze da descrizioni"
+            "\n- Validare contenuti e struttura"
+            "\n- Rispondere a domande sul documento"
+            "\n- Proporre azioni specifiche quando pertinente"
+            "\n"
+            "\nRegole:"
+            "\n- Rispondi sempre in italiano"
+            "\n- Sii conciso e professionale"
+            "\n- Quando proponi azioni, spiega brevemente cosa farai"
+            "\n- Non inventare fatti o citazioni non presenti nel documento"
+            "\n- Se non hai abbastanza contesto, chiedi chiarimenti"
+        ),
+    )
+    session.add(system_msg)
     await session.flush()
     return ChatSessionResponse.model_validate(model)
 
@@ -203,7 +231,10 @@ Content (first 3000 chars):
 
     msg_result = await db_session.execute(
         select(ChatMessageModel)
-        .where(ChatMessageModel.session_id == uuid.UUID(session_id))
+        .where(
+            ChatMessageModel.session_id == uuid.UUID(session_id),
+            ChatMessageModel.role != "system",
+        )
         .order_by(ChatMessageModel.created_at.desc())
         .limit(6)
     )
@@ -287,6 +318,209 @@ Content (first 3000 chars):
         content=ai_content,
         actions=actions,
         sources=sources or [],
+    )
+    db_session.add(ai_msg)
+    await db_session.flush()
+    return ChatMessageResponse.model_validate(ai_msg)
+
+
+@router.get("/sessions/{session_id}/stream")
+async def stream_chat(
+    session_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_session),
+):
+    """SSE endpoint that streams LLM token by token for the last assistant message."""
+    result = await db_session.execute(
+        select(ChatSessionModel).where(
+            ChatSessionModel.id == uuid.UUID(session_id),
+            ChatSessionModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        )
+    )
+    chat_model = result.scalar_one_or_none()
+    if chat_model is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    msg_result = await db_session.execute(
+        select(ChatMessageModel)
+        .where(
+            ChatMessageModel.session_id == uuid.UUID(session_id),
+            ChatMessageModel.role == "user",
+        )
+        .order_by(ChatMessageModel.created_at.desc())
+        .limit(1)
+    )
+    last_user_msg = msg_result.scalar_one_or_none()
+    if last_user_msg is None:
+        raise HTTPException(status_code=400, detail="No user message to respond to")
+
+    document_context = ""
+    if chat_model.document_id:
+        doc_result = await db_session.execute(
+            select(DocumentModel).where(DocumentModel.id == chat_model.document_id)
+        )
+        doc_model = doc_result.scalar_one_or_none()
+        if doc_model:
+            preview = json.dumps(doc_model.content)[:3000] if doc_model.content else ""
+            title = doc_model.title
+            doctype = doc_model.doc_type
+            document_context = (
+                f"Document context:\nTitle: {title}\nType: {doctype}"
+                f"\nContent (first 3000 chars):\n{preview}"
+            )
+
+    history_result = await db_session.execute(
+        select(ChatMessageModel)
+        .where(
+            ChatMessageModel.session_id == uuid.UUID(session_id),
+            ChatMessageModel.role != "system",
+        )
+        .order_by(ChatMessageModel.created_at.desc())
+        .limit(6)
+    )
+    recent_messages = list(reversed(history_result.scalars().all()))
+    history_lines = [
+        f"{'Utente' if m.role == 'user' else 'Assistente'}: {m.content[:500]}"
+        for m in recent_messages
+    ]
+    history = "\n".join(history_lines)
+
+    system_prompt = f"""Sei un assistente per la stesura e revisione di documenti professionali.
+
+{document_context}
+
+Chat history (ultimi messaggi):
+{history}
+
+Il tuo compito è aiutare l'utente con la creazione, modifica e validazione di documenti.
+Rispondi sempre in italiano in modo naturale e colloquiale, come un collega esperto.
+Non usare formattazione JSON nella risposta - parla direttamente all'utente."""
+
+    prompt = f"{system_prompt}\n\nMessaggio utente: {last_user_msg.content}"
+
+    async def event_generator():
+        try:
+            provider = get_llm_provider()
+
+            if hasattr(provider, 'generate_stream'):
+                async for chunk in provider.generate_stream(prompt):
+                    if chunk:
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+            else:
+                response = await provider.generate(prompt)
+                yield f"data: {json.dumps({'type': 'chunk', 'content': response})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception:
+            logger.exception("Stream generation failed")
+            err_data = json.dumps({
+                'type': 'error', 'content': 'Errore durante la generazione'
+            })
+            yield f"data: {err_data}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/sessions/{session_id}/messages/with-files", response_model=ChatMessageResponse)
+async def send_message_with_files(
+    session_id: str,
+    content: str = Form(""),
+    files: list[UploadFile] = File(...),
+    current_user: AuthUser = Depends(get_current_user),
+    db_session: AsyncSession = Depends(get_session),
+):
+    """Send a message with file attachments. Files are referenced in the LLM prompt."""
+    result = await db_session.execute(
+        select(ChatSessionModel).where(
+            ChatSessionModel.id == uuid.UUID(session_id),
+            ChatSessionModel.tenant_id == uuid.UUID(current_user.tenant_id),
+        )
+    )
+    chat_model = result.scalar_one_or_none()
+    if chat_model is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    user_msg = ChatMessageModel(
+        id=uuid.uuid4(),
+        session_id=uuid.UUID(session_id),
+        role="user",
+        content=content or "[File allegato]",
+        action_type="file_attachment",
+        source_refs=[{"filename": f.filename, "content_type": f.content_type} for f in files],
+    )
+    db_session.add(user_msg)
+    await db_session.flush()
+
+    file_contexts = []
+    for file in files:
+        try:
+            file_bytes = await file.read()
+            text = file_bytes.decode("utf-8", errors="replace")[:2000]
+            file_contexts.append(f"File: {file.filename}\nContent:\n{text}")
+        except Exception:
+            file_contexts.append(f"File: {file.filename} (could not read content)")
+
+    document_context = ""
+    if chat_model.document_id:
+        doc_result = await db_session.execute(
+            select(DocumentModel).where(DocumentModel.id == chat_model.document_id)
+        )
+        doc_model = doc_result.scalar_one_or_none()
+        if doc_model:
+            preview = json.dumps(doc_model.content)[:2000] if doc_model.content else ""
+            document_context = (
+                f"Document context:\nTitle: {doc_model.title}"
+                f"\nContent:\n{preview}"
+            )
+
+    file_section = ""
+    if file_contexts:
+        file_section = "\n\n---\nFile allegati:\n" + "\n---\n".join(file_contexts)
+
+    system_prompt = f"""Sei un assistente per la stesura e revisione di documenti professionali.
+{document_context}
+{file_section}
+Rispondi sempre in italiano. Aiuta l'utente con i file allegati e il contesto del documento."""
+
+    prompt = f"{system_prompt}\n\nMessaggio utente: {content or 'Analizza i file allegati.'}"
+
+    try:
+        provider = get_llm_provider()
+        result_data = await provider.generate_structured(prompt, dict)
+    except Exception:
+        logger.exception("LLM generation failed for session %s with files", session_id)
+        result_data = {
+            "reply": "Mi dispiace, si è verificato un errore durante l'elaborazione dei file.",
+            "action": None,
+        }
+
+    ai_content = result_data.get("reply", "")
+    actions = []
+    action_data = result_data.get("action")
+    if action_data and isinstance(action_data, dict):
+        actions = [{
+            "action": action_data.get("type"),
+            "label": action_data.get("label", ""),
+            "payload": action_data.get("params", {}),
+        }]
+
+    ai_msg = ChatMessageModel(
+        id=uuid.uuid4(),
+        session_id=uuid.UUID(session_id),
+        role="assistant",
+        content=ai_content,
+        actions=actions or [
+            {"action": "suggest_draft", "label": "Genera bozza", "payload": {}},
+            {"action": "suggest_patches", "label": "Proponi modifiche", "payload": {}},
+        ],
     )
     db_session.add(ai_msg)
     await db_session.flush()
