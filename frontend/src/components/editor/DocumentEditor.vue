@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import TiptapEditor from './TiptapEditor.vue'
 import DocumentOutline from './DocumentOutline.vue'
@@ -12,7 +12,8 @@ import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { useEditorStore } from '@/stores/editorStore'
 import { useDocumentStore } from '@/stores/documentStore'
 import { useDocumentDiff } from '@/composables/useDocumentDiff'
-import { PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Layers, MessageSquare } from '@lucide/vue'
+import { saveDocumentVersion } from '@/api/client'
+import { PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Layers, MessageSquare, Save } from '@lucide/vue'
 import type { Comment } from '@/types/document'
 
 const route = useRoute()
@@ -20,6 +21,12 @@ const editorStore = useEditorStore()
 const documentStore = useDocumentStore()
 const editorRef = ref<InstanceType<typeof TiptapEditor> | null>(null)
 const { summary: diffSummary } = useDocumentDiff()
+
+watch(() => documentStore.version, (version) => {
+  if (version > 1) {
+    // Future: load previous version content and call setDocuments()
+  }
+})
 
 const mode = ref<'compose' | 'review' | 'diff'>(
   (route.name as string)?.includes('review') ? 'review' : (route.name as string)?.includes('diff') ? 'diff' : 'compose',
@@ -78,6 +85,26 @@ function handleResolveComment(commentId: string) {
   stubComments.value = stubComments.value.map((c) =>
     c.commentId === commentId ? { ...c, resolved: true } : c,
   )
+}
+
+const savingVersion = ref(false)
+const versionSaved = ref(false)
+
+async function saveVersion() {
+  const docId = route.params.id as string
+  if (!docId || savingVersion.value) return
+  savingVersion.value = true
+  versionSaved.value = false
+  try {
+    await saveDocumentVersion(docId)
+    versionSaved.value = true
+    documentStore.version += 1
+    setTimeout(() => { versionSaved.value = false }, 2000)
+  } catch (e: any) {
+    console.error('Failed to save version:', e)
+  } finally {
+    savingVersion.value = false
+  }
 }
 
 function handleAddReply(commentId: string, text: string) {
@@ -162,6 +189,18 @@ function handleAddReply(commentId: string, text: string) {
         <span class="text-xs text-foreground/40 font-medium">
           v{{ documentStore.version }} · {{ documentStore.status }}
         </span>
+
+        <!-- Save Version button -->
+        <button
+          class="p-1.5 rounded-md transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          :class="versionSaved ? 'text-green-600 hover:bg-green-50' : 'text-foreground/50 hover:text-primary hover:bg-primary/8'"
+          :title="versionSaved ? 'Version saved!' : 'Save version'"
+          aria-label="Salva una nuova versione del documento"
+          :disabled="savingVersion"
+          @click="saveVersion"
+        >
+          <Save class="w-4 h-4" />
+        </button>
 
         <span class="w-px h-5 bg-primary/10 mx-1" />
 

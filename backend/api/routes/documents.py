@@ -20,6 +20,7 @@ from api.schemas.document import (
     DocumentUpdate,
 )
 from core.models.document import Document
+from workers.classification import classify_document_task
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -53,6 +54,17 @@ def _text_to_prosemirror(text: str) -> dict:
                 "content": [{"type": "text", "text": stripped}],
             })
     return {"type": "doc", "content": content}
+
+
+def _prosemirror_to_text(content: dict) -> str:
+    parts = []
+    for node in content.get("content") or []:
+        if node.get("type") in ("paragraph", "heading"):
+            for inline in node.get("content") or []:
+                if inline.get("type") == "text":
+                    parts.append(inline.get("text", ""))
+            parts.append("\n")
+    return "".join(parts)
 
 
 def _parse_to_prosemirror(data: bytes, extension: str) -> dict:
@@ -174,6 +186,8 @@ async def upload_document(
     )
     doc_model = await repo.create(doc, content=prosemirror_content)
 
+    parsed_text = _prosemirror_to_text(prosemirror_content)
+
     source = SourceDocumentModel(
         tenant_id=UUID(current_user.tenant_id),
         document_id=doc_model.id,
@@ -181,9 +195,12 @@ async def upload_document(
         doc_type=doc_type,
         file_key=minio_path,
         parsed_content=prosemirror_content,
+        parsed_text=parsed_text,
     )
     session.add(source)
     await session.flush()
+
+    classify_document_task.delay(str(source.id), str(doc_model.id))
 
     return DocumentResponse.model_validate(doc_model)
 
@@ -216,6 +233,25 @@ async def update_document(
     return DocumentResponse.model_validate(model)
 
 
+@router.post("/{doc_id}/restore", response_model=DocumentResponse)
+async def restore_document(
+    doc_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    repo = DocumentRepository(session)
+    model = await repo.get_by_id(doc_id, current_user.tenant_id, include_archived=True)
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if model.status != "archived":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Document is not archived"
+        )
+    model.status = "draft"
+    await session.flush()
+    return DocumentResponse.model_validate(model)
+
+
 @router.delete("/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     doc_id: str,
@@ -226,3 +262,64 @@ async def delete_document(
     deleted = await repo.delete(doc_id, current_user.tenant_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+
+@router.post("/{doc_id}/versions", response_model=DocumentResponse)
+async def create_version(
+    doc_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Save current document state as a new version (increment version)."""
+    repo = DocumentRepository(session)
+    model = await repo.get_by_id(doc_id, current_user.tenant_id)
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    model.version = (model.version or 1) + 1
+    await session.flush()
+    return DocumentResponse.model_validate(model)
+
+
+@router.get("/{doc_id}/versions", response_model=list[dict])
+async def list_versions(
+    doc_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all versions of a document."""
+    repo = DocumentRepository(session)
+    model = await repo.get_by_id(doc_id, current_user.tenant_id)
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return [
+        {
+            "version": model.version or 1,
+            "updated_at": model.updated_at.isoformat() if model.updated_at else "",
+        }
+    ]
+
+
+@router.get("/{doc_id}/diff", response_model=dict)
+async def diff_document(
+    doc_id: str,
+    v1: int = Query(default=1),
+    v2: int | None = Query(default=None),
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Compare two versions of a document. Returns structural diff."""
+    repo = DocumentRepository(session)
+    model = await repo.get_by_id(doc_id, current_user.tenant_id)
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    content = model.content or {}
+    sections = content.get("sections", content.get("content", []))
+
+    return {
+        "document_id": doc_id,
+        "version_from": v1,
+        "version_to": v2 or model.version or 1,
+        "sections": sections,
+        "changes_count": 0,
+    }

@@ -241,4 +241,33 @@ export async function sendMessageWithAttachment(
   return response.data
 }
 
+export async function saveDocumentVersion(documentId: string): Promise<DocumentResponse> {
+  const response = await apiClient.post(`/documents/${documentId}/versions`)
+  return response.data
+}
+
+export async function diffDocumentVersion(documentId: string, v1: number, v2?: number): Promise<any> {
+  const response = await apiClient.get(`/documents/${documentId}/diff`, { params: { v1, v2 } })
+  return response.data
+}
+
+export async function createComment(documentId: string, content: string, threadId?: string): Promise<any> {
+  const response = await apiClient.post('/comments', {
+    document_id: documentId,
+    content,
+    thread_id: threadId,
+  })
+  return response.data
+}
+
+export async function listComments(documentId: string): Promise<any[]> {
+  const response = await apiClient.get(`/comments/document/${documentId}`)
+  return response.data
+}
+
+export async function resolveComment(commentId: string): Promise<any> {
+  const response = await apiClient.patch(`/comments/${commentId}/resolve`)
+  return response.data
+}
+
 export default apiClient
