@@ -1,6 +1,3 @@
-import asyncio
-from functools import wraps
-
 from celery import Celery
 
 from config.settings import get_settings
@@ -22,8 +19,4 @@ celery_app.conf.update(
 )
 
 
-def async_task(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        return asyncio.run(f(*args, **kwargs))
-    return wrapper
+

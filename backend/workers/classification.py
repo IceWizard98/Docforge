@@ -39,7 +39,4 @@ def classify_document_task(document_id: str, document_content: str) -> DocumentC
         return DocumentClassified(document_id=document_id)
 
 
-async def classify_document(document_id: str) -> DocumentClassified:
-    return DocumentClassified(
-        document_id=document_id,
-    )
+

@@ -59,6 +59,14 @@ class PatchApplied(DomainEvent):
 
 
 @dataclass
+class PatchValidated(DomainEvent):
+    patch_set_id: str = ""
+    document_id: str = ""
+    issues: list[dict] = field(default_factory=list)
+    valid: bool = False
+
+
+@dataclass
 class DocumentValidated(DomainEvent):
     document_id: str = ""
     version_number: int = 0

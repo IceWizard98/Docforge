@@ -49,17 +49,4 @@ def generate_section_task(
         return SectionGenerated(draft_id=draft_id, section_id=section_id)
 
 
-async def generate_draft(spec: dict, document_id: str | None = None) -> DraftGenerated:
-    return DraftGenerated(
-        draft_id=spec.get("draft_id", ""),
-        document_id=document_id,
-    )
 
-
-async def generate_section(
-    draft_id: str, section_id: str, spec: dict, context_pack: dict
-) -> SectionGenerated:
-    return SectionGenerated(
-        draft_id=draft_id,
-        section_id=section_id,
-    )

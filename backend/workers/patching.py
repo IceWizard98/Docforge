@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from adapters.llm.factory import get_llm_provider
-from core.events import PatchGenerated
+from core.events import PatchGenerated, PatchValidated
 from core.services.patching import PatchService
 from workers.celery_app import celery_app
 
@@ -27,10 +27,21 @@ def generate_patch_task(document_id: str, document: dict, instructions: str) -> 
 
 
 @celery_app.task
-def validate_patch_task(patch_set: dict, document: dict) -> list[dict]:
+def validate_patch_task(patch_set: dict, document: dict) -> PatchValidated:
     try:
         service = PatchService()
-        return asyncio.run(service.validate_patch(patch_set, document))
+        issues = asyncio.run(service.validate_patch(patch_set, document))
+        return PatchValidated(
+            patch_set_id=patch_set.get("id", ""),
+            document_id=document.get("id", ""),
+            issues=issues,
+            valid=len(issues) == 0,
+        )
     except Exception as e:
         logger.error("Patch validation failed: %s", e)
-        return []
+        return PatchValidated(
+            patch_set_id=patch_set.get("id", ""),
+            document_id=document.get("id", ""),
+            issues=[],
+            valid=False,
+        )
