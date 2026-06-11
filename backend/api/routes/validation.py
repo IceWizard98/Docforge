@@ -60,12 +60,11 @@ async def get_validation(
     service = ValidationService()
     report = await service.validate_document(doc_dict)
 
-    score_norm = max(0.0, report["score"] / 100.0)
     return ValidationReport(
         document_id=doc_id,
         version=doc.version,
         passed=report["passed"],
-        score=round(score_norm, 2),
+        score=report["score"],
         issues=report["issues"],
         summary=report["summary"],
     )
