@@ -5,13 +5,14 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from adapters.postgresql.base import Base
@@ -67,6 +68,7 @@ class DocumentModel(Base):
     version = Column(Integer, nullable=False, default=1)
     content = Column(JSON, nullable=False, default=dict)
     outline = Column(JSON, nullable=False, default=list)
+    tags = Column(JSON, nullable=False, default=list)
     created_by = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -82,9 +84,15 @@ class SourceDocumentModel(Base):
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True)
     filename = Column(String(500), nullable=False)
     doc_type = Column(String(64), nullable=False, default="")
+    language = Column(String(8), nullable=True)
+    jurisdiction = Column(String(64), nullable=True)
+    tags = Column(JSON, nullable=True)
+    parties = Column(JSON, nullable=True)
+    classification_confidence = Column(Float, nullable=True)
     file_key = Column(String(500), nullable=False)
     status = Column(String(32), nullable=False, default="uploaded")
     parsed_content = Column(JSON, nullable=True)
+    parsed_text = Column(Text, nullable=True)
     doc_metadata = Column("metadata", JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -136,6 +144,8 @@ class ChatMessageModel(Base):
     actions = Column(JSON, nullable=False, default=list)
     patches = Column(JSON, nullable=False, default=list)
     sources = Column(JSON, nullable=False, default=list)
+    source_refs = Column(JSON, nullable=False, default=list)
+    action_type = Column(String(32), nullable=True)
     validation = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -144,12 +154,13 @@ class CommentModel(Base):
     __tablename__ = "comments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True)
     section_id = Column(String(64), nullable=True)
     clause_id = Column(String(64), nullable=True)
     thread_id = Column(UUID(as_uuid=True), nullable=True)
-    author_id = Column(UUID(as_uuid=True), nullable=False)
-    text = Column(Text, nullable=False)
+    author = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
     resolved = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -167,6 +178,23 @@ class PatchSetModel(Base):
     summary = Column(String(500), nullable=False, default="")
     operations = Column(JSON, nullable=False, default=list)
     created_by = Column(UUID(as_uuid=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class TemplateModel(Base):
+    __tablename__ = "templates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    doc_type = Column(String(50), nullable=True)
+    content = Column(JSONB, nullable=False)
+    category = Column(String(100), nullable=True)
+    is_public = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -203,3 +231,30 @@ class DraftModel(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class CitationModel(Base):
+    __tablename__ = "citations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chat_message_id = Column(UUID(as_uuid=True), ForeignKey("chat_messages.id"), nullable=True)
+    patch_set_id = Column(UUID(as_uuid=True), ForeignKey("patch_sets.id"), nullable=True)
+    chunk_id = Column(String(64), ForeignKey("document_chunks.id"), nullable=True)
+    source_doc_id = Column(UUID(as_uuid=True), ForeignKey("source_documents.id"), nullable=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    confidence = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ProvenanceLinkModel(Base):
+    __tablename__ = "provenance_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
+    source_doc_id = Column(UUID(as_uuid=True), ForeignKey("source_documents.id"), nullable=False)
+    section_id = Column(String(64), nullable=True)
+    chunk_id = Column(String(64), nullable=True)
+    confidence = Column(Float, nullable=True)
+    version_number = Column(Integer, nullable=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

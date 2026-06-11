@@ -66,6 +66,9 @@ class TestDocumentClassified:
         assert evt.doc_type == ""
         assert evt.language == ""
         assert evt.tags == []
+        assert evt.jurisdiction == ""
+        assert evt.parties == []
+        assert evt.classification_confidence == 0.0
 
     def test_with_tags(self):
         evt = DocumentClassified(
@@ -73,10 +76,16 @@ class TestDocumentClassified:
             doc_type="contract",
             language="en",
             tags=["legal", "nda"],
+            jurisdiction="US",
+            parties=["Acme Corp", "Beta Inc"],
+            classification_confidence=0.85,
         )
         assert evt.tags == ["legal", "nda"]
         assert evt.doc_type == "contract"
         assert evt.language == "en"
+        assert evt.jurisdiction == "US"
+        assert evt.parties == ["Acme Corp", "Beta Inc"]
+        assert evt.classification_confidence == 0.85
 
 
 class TestDocumentIndexed:

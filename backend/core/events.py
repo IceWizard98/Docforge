@@ -20,6 +20,9 @@ class DocumentClassified(DomainEvent):
     doc_type: str = ""
     language: str = ""
     tags: list[str] = field(default_factory=list)
+    jurisdiction: str = ""
+    parties: list[str] = field(default_factory=list)
+    classification_confidence: float = 0.0
 
 
 @dataclass
