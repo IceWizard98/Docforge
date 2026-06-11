@@ -6,6 +6,7 @@ from adapters.postgresql.base import get_session
 from adapters.postgresql.models import DocumentModel
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.validation import ValidationReport
+from core.services.validation import ValidationService
 
 router = APIRouter(prefix="/documents", tags=["validation"])
 
@@ -51,27 +52,20 @@ async def get_validation(
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    issues: list[dict] = []
-    content = doc.content or {}
-    sections = content.get("sections", []) if isinstance(content, dict) else []
+    doc_dict = {
+        "id": doc_id,
+        "version": doc.version,
+        "content": doc.content or {},
+    }
+    service = ValidationService()
+    report = await service.validate_document(doc_dict)
 
-    for section in sections:
-        section_text = section.get("content", "")
-        if not section_text or not section_text.strip():
-            issues.append({
-                "type": "empty_section",
-                "section_id": section.get("section_id", ""),
-                "message": f"Section '{section.get('title', '')}' is empty",
-            })
-
-    passed = len(issues) == 0
-    score = max(0.0, 1.0 - len(issues) * 0.1)
-
+    score_norm = max(0.0, report["score"] / 100.0)
     return ValidationReport(
         document_id=doc_id,
         version=doc.version,
-        passed=passed,
-        score=round(score, 2),
-        issues=issues,
-        summary=f"{len(issues)} issues found",
+        passed=report["passed"],
+        score=round(score_norm, 2),
+        issues=report["issues"],
+        summary=report["summary"],
     )
