@@ -1,18 +1,19 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { RouterView, useRouter } from 'vue-router'
-import { useAuthStore } from '@/api/authStore'
-
-const auth = useAuthStore()
-const router = useRouter()
-
-onMounted(() => {
-  auth.checkToken()
-})
+import { RouterView } from 'vue-router'
+import AppShell from '@/components/layout/AppShell.vue'
 </script>
 
 <template>
-  <div class="h-screen w-screen bg-surface text-foreground overflow-hidden">
-    <RouterView />
-  </div>
+  <RouterView v-slot="{ Component, route }">
+    <template v-if="route.meta?.layout === false">
+      <component :is="Component" />
+    </template>
+    <template v-else>
+      <AppShell>
+        <keep-alive :include="['DocumentView']">
+          <component :is="Component" :key="route.path" />
+        </keep-alive>
+      </AppShell>
+    </template>
+  </RouterView>
 </template>
