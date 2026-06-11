@@ -6,27 +6,55 @@ import DocumentOutline from './DocumentOutline.vue'
 import ChatDock from '@/components/chat/ChatDock.vue'
 import SuggestionReviewBar from '@/components/review/SuggestionReviewBar.vue'
 import DiffInspector from '@/components/review/DiffInspector.vue'
+import CommentThreadPanel from '@/components/review/CommentThreadPanel.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { useEditorStore } from '@/stores/editorStore'
 import { useDocumentStore } from '@/stores/documentStore'
-import { PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Layers } from '@lucide/vue'
+import { useDocumentDiff } from '@/composables/useDocumentDiff'
+import { PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Layers, MessageSquare } from '@lucide/vue'
+import type { Comment } from '@/types/document'
 
 const route = useRoute()
 const editorStore = useEditorStore()
 const documentStore = useDocumentStore()
 const editorRef = ref<InstanceType<typeof TiptapEditor> | null>(null)
+const { summary: diffSummary } = useDocumentDiff()
 
 const mode = ref<'compose' | 'review' | 'diff'>(
   (route.name as string)?.includes('review') ? 'review' : (route.name as string)?.includes('diff') ? 'diff' : 'compose',
 )
 
 const showDiffInspector = ref(false)
+const showComments = ref(false)
 
 const isReviewMode = computed(() => mode.value === 'review')
 const isDiffMode = computed(() => mode.value === 'diff')
 
 const editorProp = computed(() => ({ value: editorRef.value?.editor || null }))
+
+const stubComments = ref<Comment[]>([
+  {
+    commentId: 'c1',
+    threadId: 't1',
+    author: 'Alice',
+    text: 'This section needs more detail on liability terms.',
+    resolved: false,
+    createdAt: new Date().toISOString(),
+    replies: [
+      { replyId: 'r1', author: 'Bob', text: 'Agreed, I will revise.', createdAt: new Date().toISOString() },
+    ],
+  },
+  {
+    commentId: 'c2',
+    threadId: 't2',
+    author: 'Charlie',
+    text: 'Consider adding a termination clause here.',
+    resolved: true,
+    createdAt: new Date().toISOString(),
+    replies: [],
+  },
+])
 
 onMounted(() => {
   const docId = route.params.id as string
@@ -44,6 +72,20 @@ function handleRetry() {
   if (docId) {
     documentStore.fetchDocument(docId)
   }
+}
+
+function handleResolveComment(commentId: string) {
+  stubComments.value = stubComments.value.map((c) =>
+    c.commentId === commentId ? { ...c, resolved: true } : c,
+  )
+}
+
+function handleAddReply(commentId: string, text: string) {
+  stubComments.value = stubComments.value.map((c) =>
+    c.commentId === commentId
+      ? { ...c, replies: [...c.replies, { replyId: `r_${Date.now()}`, author: 'You', text, createdAt: new Date().toISOString() }] }
+      : c,
+  )
 }
 </script>
 
@@ -67,6 +109,7 @@ function handleRetry() {
         <button
           class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           :title="editorStore.showOutline ? 'Hide outline' : 'Show outline'"
+          aria-label="Mostra o nascondi la struttura del documento"
           @click="editorStore.toggleOutline()"
         >
           <PanelLeftOpen v-if="!editorStore.showOutline" class="w-4 h-4" />
@@ -93,11 +136,24 @@ function handleRetry() {
 
         <span class="flex-1" />
 
+        <!-- Comments toggle -->
+        <button
+          class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          :title="showComments ? 'Hide comments' : 'Show comments'"
+          aria-label="Mostra o nascondi i commenti"
+          @click="showComments = !showComments"
+        >
+          <MessageSquare class="w-4 h-4" />
+        </button>
+
+        <span class="w-px h-5 bg-primary/10 mx-1" />
+
         <!-- Diff inspector toggle -->
         <button
           v-if="isDiffMode"
           class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           :title="showDiffInspector ? 'Hide diff inspector' : 'Show diff inspector'"
+          aria-label="Mostra o nascondi l'ispettore delle differenze"
           @click="showDiffInspector = !showDiffInspector"
         >
           <Layers class="w-4 h-4" />
@@ -113,6 +169,7 @@ function handleRetry() {
         <button
           class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           :title="editorStore.showAssistant ? 'Hide assistant' : 'Show assistant'"
+          aria-label="Mostra o nascondi l'assistente"
           @click="editorStore.toggleAssistant()"
         >
           <PanelRightOpen v-if="!editorStore.showAssistant" class="w-4 h-4" />
@@ -132,7 +189,7 @@ function handleRetry() {
 
       <!-- Error -->
       <ErrorMessage
-        v-if="documentStore.error && !documentStore.loading"
+        v-else-if="documentStore.error && !documentStore.loading"
         :message="documentStore.error"
         retry-label="Riprova"
         @retry="handleRetry"
@@ -142,7 +199,11 @@ function handleRetry() {
       <div v-else class="flex-1 overflow-y-auto bg-surface/40">
         <div class="max-w-3xl mx-auto py-8">
           <div class="bg-white rounded-lg shadow-sm border border-primary/10">
-            <TiptapEditor ref="editorRef" />
+            <TiptapEditor
+              ref="editorRef"
+              :document-id="route.params.id as string"
+              @save="documentStore.saveContent"
+            />
           </div>
         </div>
       </div>
@@ -157,19 +218,33 @@ function handleRetry() {
         v-if="isDiffMode && showDiffInspector"
         class="w-72 border-l border-primary/10 bg-surface flex flex-col overflow-hidden"
       >
-        <DiffInspector :summary="null" />
+        <DiffInspector :summary="diffSummary" />
       </aside>
     </Transition>
 
     <!-- Right Sidebar: Assistant / Chat -->
     <Transition name="sidebar">
       <aside
-        v-if="editorStore.showAssistant && !isDiffMode"
+        v-if="editorStore.showAssistant && !isDiffMode && !showComments"
         class="w-72 border-l border-primary/10 bg-surface flex flex-col overflow-hidden"
       >
         <ChatDock
           :editor="editorProp"
           :document-id="route.params.id as string"
+        />
+      </aside>
+    </Transition>
+
+    <!-- Right Sidebar: Comments -->
+    <Transition name="sidebar">
+      <aside
+        v-if="showComments"
+        class="w-72 border-l border-primary/10 bg-surface flex flex-col overflow-hidden"
+      >
+        <CommentThreadPanel
+          :comments="stubComments"
+          @resolve="handleResolveComment"
+          @add-reply="handleAddReply"
         />
       </aside>
     </Transition>

@@ -36,9 +36,17 @@ const {
   clearMessages,
 } = useChatStream()
 
+const messagesContainer = ref<HTMLElement | null>(null)
+
 watch(messages, async () => {
   await nextTick()
-  messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
+  if (!messagesContainer.value) return
+  const el = messagesContainer.value
+  const threshold = 100
+  const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+  if (isNearBottom) {
+    messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' })
+  }
 })
 
 async function ensureSession() {
@@ -128,7 +136,7 @@ function handleKeydown(e: KeyboardEvent) {
     </div>
 
     <!-- Messages -->
-    <div class="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+    <div ref="messagesContainer" class="flex-1 overflow-y-auto px-4 py-3 space-y-4">
       <!-- Empty state -->
       <EmptyState
         v-if="messages.length === 0 && !isStreaming && !streamError"
@@ -162,7 +170,7 @@ function handleKeydown(e: KeyboardEvent) {
     </div>
 
     <!-- Source context -->
-    <SourceContextPanel />
+    <SourceContextPanel :sources="messages[messages.length - 1]?.sources || []" />
 
     <!-- Input area -->
     <div class="border-t border-primary/10 p-3">
@@ -173,11 +181,13 @@ function handleKeydown(e: KeyboardEvent) {
           placeholder="Descrivi cosa vuoi creare o modificare..."
           rows="1"
           :disabled="isStreaming"
+          aria-label="Messaggio per l'assistente"
           @keydown="handleKeydown"
         />
         <button
           class="self-end p-2 rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           :disabled="!inputText.trim() || isStreaming"
+          aria-label="Invia messaggio"
           @click="send"
         >
           <Send class="w-4 h-4" />
