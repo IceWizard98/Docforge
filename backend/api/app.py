@@ -20,22 +20,34 @@ settings = get_settings()
 
 
 def create_app() -> FastAPI:
+    # In production: refuse insecure defaults at boot rather than logging and serving.
+    if settings.jwt_secret == "change-me-in-production":
+        if settings.is_production:
+            raise RuntimeError(
+                "JWT_SECRET is still the default 'change-me-in-production'. "
+                "Set a strong, unique JWT_SECRET before starting in production."
+            )
+        logger.critical("JWT secret is the insecure default — set JWT_SECRET (dev only).")
+
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if "*" in origins:
+        if settings.is_production:
+            raise RuntimeError(
+                "CORS wildcard '*' with credentials is forbidden in production. "
+                "Set explicit origins in CORS_ORIGINS."
+            )
+        logger.critical("CORS wildcard '*' with credentials is insecure (dev only).")
+
+    # Hide API docs in production.
+    docs_url = None if settings.is_production else "/docs"
+    redoc_url = None if settings.is_production else "/redoc"
+
     app = FastAPI(
         title="DocForge API",
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url=docs_url,
+        redoc_url=redoc_url,
     )
-
-    origins = settings.cors_origins.split(",")
-
-    for origin in origins:
-        if origin.strip() == "*":
-            logger.critical(
-                "CORS: allow_credentials=True with wildcard origin '*' is insecure. "
-                "Set specific origins in cors_origins."
-            )
-            break
 
     app.add_middleware(
         CORSMiddleware,
@@ -47,15 +59,33 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def validate_security_settings():
-        if settings.jwt_secret == "change-me-in-production":
-            logger.critical(
-                "JWT secret is still the default 'change-me-in-production'. "
-                "Set a strong, unique JWT_SECRET in production."
-            )
+        import asyncio
+
         if not settings.minio_access_key or not settings.minio_secret_key:
             logger.warning(
                 "MinIO credentials not configured. Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY."
             )
+
+        def _ensure_bucket() -> str:
+            from minio import Minio
+            client = Minio(
+                settings.minio_endpoint,
+                access_key=settings.minio_access_key,
+                secret_key=settings.minio_secret_key,
+                secure=settings.minio_use_ssl,
+            )
+            if not client.bucket_exists(settings.minio_bucket):
+                client.make_bucket(settings.minio_bucket)
+                return "created"
+            return "exists"
+
+        # Blocking MinIO I/O off the event loop so a slow/unreachable MinIO
+        # doesn't stall startup/health for every request.
+        try:
+            result = await asyncio.to_thread(_ensure_bucket)
+            logger.info("MinIO bucket '%s' %s", settings.minio_bucket, result)
+        except Exception as e:
+            logger.warning("Could not verify/create MinIO bucket: %s", e)
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(documents_router, prefix="/api/v1")

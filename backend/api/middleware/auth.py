@@ -9,7 +9,6 @@ from config.settings import get_settings
 
 class AuthUser(BaseModel):
     user_id: str
-    tenant_id: str
     role: str
     email: str | None = None
 
@@ -19,6 +18,8 @@ security = HTTPBearer(auto_error=False)
 
 async def blacklist_token(token: str, ttl: int = 3600) -> None:
     redis = await RedisClient.get_client()
+    if redis is None:
+        return
     payload = jwt.decode(
         token,
         get_settings().jwt_secret,
@@ -32,6 +33,8 @@ async def blacklist_token(token: str, ttl: int = 3600) -> None:
 
 async def blacklist_user_tokens(user_id: str, ttl: int = 3600) -> None:
     redis = await RedisClient.get_client()
+    if redis is None:
+        return
     key = f"user:{user_id}:tokens"
     members = await redis.smembers(key)
     if members:
@@ -55,13 +58,14 @@ async def _decode_token(token: str) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
     redis = await RedisClient.get_client()
-    jti = payload.get("jti", token)
-    if await redis.sismember("token_blacklist", jti):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if redis is not None:
+        jti = payload.get("jti", token)
+        if await redis.sismember("token_blacklist", jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     return payload
 
 
@@ -78,11 +82,10 @@ async def get_current_user(
     token = credentials.credentials
     payload = await _decode_token(token)
     user_id = payload.get("sub")
-    tenant_id = payload.get("tenant_id")
     role = payload.get("role")
     email = payload.get("email")
     token_type = payload.get("token_type")
-    if user_id is None or tenant_id is None or role is None:
+    if user_id is None or role is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
@@ -93,10 +96,8 @@ async def get_current_user(
             detail="Invalid token type for this endpoint",
         )
     request.state.user = payload
-    request.state.tenant_id = tenant_id
     return AuthUser(
         user_id=str(user_id),
-        tenant_id=str(tenant_id),
         role=str(role),
         email=str(email) if email else None,
     )
