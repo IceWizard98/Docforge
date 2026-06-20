@@ -1,7 +1,9 @@
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.llm.factory import get_llm_provider
@@ -18,19 +20,17 @@ router = APIRouter(prefix="/documents", tags=["validation"])
 
 @router.post("/{doc_id}/validate", response_model=ValidationReport)
 async def validate_document(
-    doc_id: str,
+    doc_id: UUID,
     llm: bool = Query(False, description="Enable LLM-based semantic validation"),
     spec: str | None = Query(None, description="Optional JSON spec for section audit"),
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     import json
-    import uuid
 
     result = await session.execute(
         select(DocumentModel).where(
-            DocumentModel.id == uuid.UUID(doc_id),
-            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            DocumentModel.id == doc_id,
         )
     )
     doc = result.scalar_one_or_none()
@@ -67,7 +67,14 @@ async def validate_document(
             logger.exception("LLM validation unavailable for doc %s", doc_id)
 
     doc.status = "in_review"
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Validation conflict, please retry",
+        )
 
     return ValidationReport(
         document_id=doc_id,
@@ -82,17 +89,15 @@ async def validate_document(
 
 @router.get("/{doc_id}/validation", response_model=ValidationReport)
 async def get_validation(
-    doc_id: str,
+    doc_id: UUID,
     llm: bool = Query(False, description="Enable LLM-based semantic validation"),
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    import uuid
 
     result = await session.execute(
         select(DocumentModel).where(
-            DocumentModel.id == uuid.UUID(doc_id),
-            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            DocumentModel.id == doc_id,
         )
     )
     doc = result.scalar_one_or_none()

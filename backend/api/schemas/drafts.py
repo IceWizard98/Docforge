@@ -1,11 +1,12 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
 
 class DraftCreate(BaseModel):
-    chat_session_id: str
-    document_id: str | None = None
+    chat_session_id: UUID
+    document_id: UUID | None = None
 
 
 class DraftResponse(BaseModel):

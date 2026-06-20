@@ -1,9 +1,12 @@
 import logging
 import uuid
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from adapters.llm.factory import get_llm_provider
 from adapters.postgresql.base import get_session
@@ -45,8 +48,7 @@ async def generate_patch(
 ):
     result = await session.execute(
         select(DocumentModel).where(
-            DocumentModel.id == uuid.UUID(body.document_id),
-            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            DocumentModel.id == body.document_id,
         )
     )
     doc = result.scalar_one_or_none()
@@ -66,8 +68,7 @@ async def generate_patch(
 
     patch_set = PatchSetModel(
         id=uuid.uuid4(),
-        tenant_id=uuid.UUID(current_user.tenant_id),
-        document_id=uuid.UUID(body.document_id),
+        document_id=body.document_id,
         version_from=doc.version,
         version_to=doc.version + 1,
         status="proposed",
@@ -82,7 +83,14 @@ async def generate_patch(
     )
 
     session.add(patch_set)
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Database constraint violation",
+        ) from exc
 
     return PatchSetResponse(
         id=str(patch_set.id),
@@ -98,14 +106,13 @@ async def generate_patch(
 
 @router.post("/{patch_id}/generate", response_model=PatchSetResponse)
 async def generate_patch_for_existing(
-    patch_id: str,
+    patch_id: UUID,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     result = await session.execute(
         select(PatchSetModel).where(
-            PatchSetModel.id == uuid.UUID(patch_id),
-            PatchSetModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            PatchSetModel.id == patch_id,
         )
     )
     patch = result.scalar_one_or_none()
@@ -115,7 +122,6 @@ async def generate_patch_for_existing(
     doc_result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == patch.document_id,
-            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
         )
     )
     doc = doc_result.scalar_one_or_none()
@@ -138,7 +144,14 @@ async def generate_patch_for_existing(
     patch.summary = plan.get("summary", patch.summary)
     patch.version_from = doc.version
     patch.version_to = doc.version + 1
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Database constraint violation",
+        ) from exc
 
     logger.info(
         "Patch plan regenerated for patch set %s — %d operations",
@@ -159,14 +172,13 @@ async def generate_patch_for_existing(
 
 @router.get("/{patch_id}", response_model=PatchSetResponse)
 async def get_patch(
-    patch_id: str,
+    patch_id: UUID,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     result = await session.execute(
         select(PatchSetModel).where(
-            PatchSetModel.id == uuid.UUID(patch_id),
-            PatchSetModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            PatchSetModel.id == patch_id,
         )
     )
     patch = result.scalar_one_or_none()
@@ -185,42 +197,86 @@ async def get_patch(
     )
 
 
+def _find_operation(operations: list[dict], op_id: str) -> dict | None:
+    for op in operations:
+        if op.get("id") == op_id:
+            return op
+    return None
+
+
 @router.post("/{patch_id}/operations/{op_id}/accept", response_model=dict)
 async def accept_operation(
-    patch_id: str,
+    patch_id: UUID,
     op_id: str,
-    current_user: AuthUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Accept operation requires real DB transaction — not yet implemented",
-    )
-
-
-@router.post("/{patch_id}/operations/{op_id}/reject", response_model=dict)
-async def reject_operation(
-    patch_id: str,
-    op_id: str,
-    current_user: AuthUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Reject operation requires real DB transaction — not yet implemented",
-    )
-
-
-@router.post("/{patch_id}/apply", response_model=dict)
-async def apply_patch(
-    patch_id: str,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     result = await session.execute(
         select(PatchSetModel).where(
-            PatchSetModel.id == uuid.UUID(patch_id),
-            PatchSetModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            PatchSetModel.id == patch_id,
+        )
+    )
+    patch = result.scalar_one_or_none()
+    if patch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch set not found")
+
+    operation = _find_operation(patch.operations or [], op_id)
+    if operation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operation not found")
+
+    operation["status"] = "accepted"
+    flag_modified(patch, "operations")
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Failed to accept operation",
+        )
+    return {"status": "accepted", "operation_id": op_id}
+
+
+@router.post("/{patch_id}/operations/{op_id}/reject", response_model=dict)
+async def reject_operation(
+    patch_id: UUID,
+    op_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(PatchSetModel).where(
+            PatchSetModel.id == patch_id,
+        )
+    )
+    patch = result.scalar_one_or_none()
+    if patch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch set not found")
+
+    operation = _find_operation(patch.operations or [], op_id)
+    if operation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operation not found")
+
+    operation["status"] = "rejected"
+    flag_modified(patch, "operations")
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Failed to reject operation",
+        )
+    return {"status": "rejected", "operation_id": op_id}
+
+
+@router.post("/{patch_id}/apply", response_model=dict)
+async def apply_patch(
+    patch_id: UUID,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(PatchSetModel).where(
+            PatchSetModel.id == patch_id,
         )
     )
     patch = result.scalar_one_or_none()
@@ -230,7 +286,6 @@ async def apply_patch(
     doc_result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == patch.document_id,
-            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
         )
     )
     doc = doc_result.scalar_one_or_none()
@@ -253,7 +308,14 @@ async def apply_patch(
     doc.version += 1
     patch.version_to = doc.version
     patch.status = "applied"
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Database constraint violation",
+        ) from exc
     logger.info(
         "Patch set %s applied to document %s by user %s",
         patch_id, doc.id, current_user.user_id,

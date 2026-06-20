@@ -1,10 +1,11 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
 
 class PatchGenerateRequest(BaseModel):
-    document_id: str
+    document_id: UUID
     instructions: str
 
 
