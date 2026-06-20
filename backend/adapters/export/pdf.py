@@ -1,3 +1,6 @@
+from adapters.export._prosemirror import walk
+
+
 def export_pdf(html_content: str) -> bytes:
     try:
         from weasyprint import HTML
@@ -12,84 +15,66 @@ def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _extract_text(node: dict) -> str:
-    return _escape_html(str(node.get("text", "")))
+def _inline(runs: list[tuple[str, list[str]]]) -> str:
+    out = []
+    for text, marks in runs:
+        t = _escape_html(text)
+        for mark in marks:
+            if mark == "bold":
+                t = f"<strong>{t}</strong>"
+            elif mark == "italic":
+                t = f"<em>{t}</em>"
+            elif mark == "code":
+                t = f"<code>{t}</code>"
+        out.append(t)
+    return "".join(out)
 
 
-def _render_inline_html(node: dict) -> str:
-    text = _escape_html(str(node.get("text", "")))
-    if not text:
-        return ""
-    marks = node.get("marks", [])
-    for mark in marks:
-        mark_type = mark.get("type", "")
-        if mark_type == "bold":
-            text = f"<strong>{text}</strong>"
-        elif mark_type == "italic":
-            text = f"<em>{text}</em>"
-        elif mark_type == "code":
-            text = f"<code>{text}</code>"
-    return text
+class _HtmlRenderer:
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+
+    def heading(self, level: int, runs) -> None:
+        self.parts.append(f"<h{level}>{_inline(runs)}</h{level}>")
+
+    def paragraph(self, runs) -> None:
+        self.parts.append(f"<p>{_inline(runs)}</p>")
+
+    def bullet_list(self, items) -> None:
+        lis = "".join(f"<li>{_inline(r)}</li>" for r in items)
+        self.parts.append(f"<ul>{lis}</ul>")
+
+    def ordered_list(self, items) -> None:
+        lis = "".join(f"<li>{_inline(r)}</li>" for r in items)
+        self.parts.append(f"<ol>{lis}</ol>")
+
+    def blockquote(self, kids) -> None:
+        sub = _HtmlRenderer()
+        walk(kids, sub)
+        self.parts.append(f"<blockquote>{chr(10).join(sub.parts)}</blockquote>")
+
+    def code_block(self, lang: str, code: str) -> None:
+        cls = f' class="language-{lang}"' if lang else ""
+        self.parts.append(f"<pre><code{cls}>{_escape_html(code)}</code></pre>")
+
+    def horizontal_rule(self) -> None:
+        self.parts.append("<hr>")
+
+    def table(self, rows) -> None:
+        out_rows = []
+        for cells in rows:
+            cell_html = []
+            for is_header, runs in cells:
+                tag = "th" if is_header else "td"
+                cell_html.append(f"<{tag}>{_inline(runs)}</{tag}>")
+            out_rows.append(f"<tr>{''.join(cell_html)}</tr>")
+        self.parts.append(f"<table border='1'>{''.join(out_rows)}</table>")
 
 
 def _render_children_html(children: list[dict]) -> str:
-    parts = []
-    for child in children:
-        node_type = child.get("type", "")
-        node_children = child.get("content", [])
-
-        if node_type == "heading":
-            level = child.get("attrs", {}).get("level", 1)
-            text = "".join(_render_inline_html(c) for c in node_children)
-            parts.append(f"<h{level}>{text}</h{level}>")
-
-        elif node_type == "paragraph":
-            text = "".join(_render_inline_html(c) for c in node_children)
-            parts.append(f"<p>{text}</p>")
-
-        elif node_type == "bulletList":
-            items = []
-            for item in node_children:
-                item_text = "".join("".join(_render_inline_html(c) for c in p.get("content", [])) for p in item.get("content", []))
-                items.append(f"<li>{item_text}</li>")
-            parts.append(f"<ul>{''.join(items)}</ul>")
-
-        elif node_type == "orderedList":
-            items = []
-            for item in node_children:
-                item_text = "".join("".join(_render_inline_html(c) for c in p.get("content", [])) for p in item.get("content", []))
-                items.append(f"<li>{item_text}</li>")
-            parts.append(f"<ol>{''.join(items)}</ol>")
-
-        elif node_type == "blockquote":
-            inner = _render_children_html(node_children)
-            parts.append(f"<blockquote>{inner}</blockquote>")
-
-        elif node_type == "codeBlock":
-            lang = child.get("attrs", {}).get("language", "")
-            code = "".join(_escape_html(c.get("text", "")) for c in node_children)
-            cls = f' class="language-{lang}"' if lang else ""
-            parts.append(f"<pre><code{cls}>{code}</code></pre>")
-
-        elif node_type == "horizontalRule":
-            parts.append("<hr>")
-
-        elif node_type == "table":
-            rows = []
-            for row in node_children:
-                cells = row.get("content", [])
-                cell_html = []
-                for cell in cells:
-                    cell_text = "".join("".join(_render_inline_html(c) for c in p.get("content", [])) for p in cell.get("content", []))
-                    cell_type = "th" if cell.get("type") == "tableHeader" else "td"
-                    cell_html.append(f"<{cell_type}>{cell_text}</{cell_type}>")
-                rows.append(f"<tr>{''.join(cell_html)}</tr>")
-            parts.append(f"<table border='1'>{''.join(rows)}</table>")
-
-        elif node_type in ("section", "clause", "doc"):
-            parts.append(_render_children_html(node_children))
-
-    return "\n".join(parts)
+    renderer = _HtmlRenderer()
+    walk(children, renderer)
+    return "\n".join(renderer.parts)
 
 
 def document_to_html(document: dict) -> str:
@@ -97,4 +82,7 @@ def document_to_html(document: dict) -> str:
     content = document.get("content", {})
     children = content.get("content", []) if isinstance(content, dict) else []
     body = _render_children_html(children)
-    return f"<!DOCTYPE html><html><head><meta charset='utf-8'></head><body><h1>{title}</h1>{body}</body></html>"
+    return (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+        f"<body><h1>{title}</h1>{body}</body></html>"
+    )
