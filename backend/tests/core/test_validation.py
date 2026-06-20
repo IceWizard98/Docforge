@@ -483,3 +483,32 @@ class TestValidationService:
         }
         issues = await self.service.validate_with_llm(doc, mock_provider)
         assert issues == []
+
+
+class TestProseMirrorSchema:
+    """Regression: validation must read real ProseMirror docs (content.content), not only flat schema."""
+
+    def setup_method(self):
+        from core.services.validation import _get_sections
+        self._get_sections = _get_sections
+
+    def test_parses_prosemirror_section_nodes(self):
+        doc = {"content": {"type": "doc", "content": [
+            {"type": "section", "attrs": {"sectionId": "sec_1", "title": "Intro"},
+             "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Hello body"}]}]},
+        ]}}
+        sections = self._get_sections(doc)
+        assert len(sections) == 1
+        assert sections[0]["section_id"] == "sec_1"
+        assert sections[0]["title"] == "Intro"
+        assert "Hello body" in sections[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_empty_prosemirror_section_flagged(self):
+        from core.services.validation import ValidationService
+        doc = {"id": "d1", "content": {"type": "doc", "content": [
+            {"type": "section", "attrs": {"sectionId": "sec_1", "title": "Vuota"}, "content": []},
+        ]}}
+        result = await ValidationService().validate_document(doc)
+        assert any(i["type"] == "empty_section" for i in result["issues"])
+        assert result["passed"] is False

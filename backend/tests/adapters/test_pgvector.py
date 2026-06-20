@@ -46,8 +46,29 @@ async def test_search_similar():
     from adapters.postgresql.pgvector import PgvectorAdapter
 
     adapter = PgvectorAdapter(mock_session)
-    results = await adapter.search_similar([0.1, 0.2, 0.3], limit=5, tenant_id="t_123")
+    results = await adapter.search_similar([0.1, 0.2, 0.3], limit=5)
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_store_embeddings_binds_document_id():
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock()
+    mock_session.flush = AsyncMock()
+
+    from adapters.postgresql.pgvector import PgvectorAdapter
+
+    adapter = PgvectorAdapter(mock_session)
+    chunks = [{
+        "id": "chk_1", "document_id": None,
+        "source_document_id": "src_1", "text": "hello", "token_count": 1, "metadata": {},
+    }]
+    await adapter.store_embeddings(chunks, [[0.1, 0.2, 0.3]])
+    params = mock_session.execute.call_args[0][1]
+    assert params["document_id"] is None
+    assert params["source_document_id"] == "src_1"
+    sql = str(mock_session.execute.call_args[0][0])
+    assert "tenant_id" not in sql
 
 
 @pytest.mark.asyncio

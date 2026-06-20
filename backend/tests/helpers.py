@@ -2,14 +2,11 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-TEST_TENANT_ID = str(uuid.uuid4())
-
 
 def build_mock_document(overrides=None):
     now = datetime.now(UTC)
     doc = MagicMock()
     doc.id = uuid.uuid4()
-    doc.tenant_id = uuid.UUID(TEST_TENANT_ID)
     doc.title = "Test Document"
     doc.doc_type = "contract"
     doc.status = "draft"

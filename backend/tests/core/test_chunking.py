@@ -26,36 +26,3 @@ class TestChunkingService:
         chunks = self.service.chunk_text("Short text", target_tokens=100)
         assert len(chunks) > 0
         assert chunks[0].text == "Short text"
-
-    def test_chunk_document_with_sections(self):
-        doc = {
-            "id": "doc_123",
-            "content": {
-                "sections": [
-                    {"section_id": "sec_1", "content": "Section one content. " * 50},
-                    {"section_id": "sec_2", "content": "Section two content. " * 50},
-                ]
-            },
-        }
-        chunks = self.service.chunk_document(doc, target_tokens=200)
-        assert len(chunks) > 0
-        for c in chunks:
-            assert c.document_id == "doc_123"
-            assert c.section_id in ("sec_1", "sec_2")
-
-    def test_chunk_document_empty_sections(self):
-        doc = {
-            "id": "doc_123",
-            "content": {
-                "sections": [
-                    {"section_id": "sec_1", "content": ""},
-                ]
-            },
-        }
-        chunks = self.service.chunk_document(doc)
-        assert chunks == []
-
-    def test_chunk_document_no_content(self):
-        doc = {"id": "doc_123", "content": {}}
-        chunks = self.service.chunk_document(doc)
-        assert chunks == []

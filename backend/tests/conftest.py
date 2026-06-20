@@ -10,10 +10,7 @@ from api.routes.auth import create_access_token
 from config.settings import get_settings
 
 TEST_JWT_SECRET = "test-secret-for-testing-purposes-only"
-TEST_TENANT_ID = str(uuid.uuid4())
-TEST_TENANT_B_ID = str(uuid.uuid4())
 TEST_USER_ID = str(uuid.uuid4())
-TEST_USER_B_ID = str(uuid.uuid4())
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -88,7 +85,6 @@ async def async_client(app, mock_session, mock_redis):
 def auth_headers():
     token = create_access_token({
         "sub": TEST_USER_ID,
-        "tenant_id": TEST_TENANT_ID,
         "role": "editor",
         "email": "test@example.com",
     })
@@ -99,20 +95,8 @@ def auth_headers():
 def auth_headers_admin():
     token = create_access_token({
         "sub": str(uuid.uuid4()),
-        "tenant_id": TEST_TENANT_ID,
         "role": "admin",
         "email": "admin@example.com",
-    })
-    return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-def auth_headers_tenant_b():
-    token = create_access_token({
-        "sub": TEST_USER_B_ID,
-        "tenant_id": TEST_TENANT_B_ID,
-        "role": "editor",
-        "email": "other@example.com",
     })
     return {"Authorization": f"Bearer {token}"}
 
