@@ -44,7 +44,7 @@ async function handleSubmit() {
 <template>
   <div class="h-screen w-screen flex items-center justify-center bg-surface">
     <div class="w-full max-w-sm mx-auto px-6">
-      <div class="bg-white rounded-lg border border-primary/10 p-8">
+      <div class="bg-card rounded-lg border border-primary/10 p-8">
         <h1 class="text-xl font-bold text-foreground mb-1">Accedi</h1>
         <p class="text-sm text-foreground/50 mb-6">Inserisci le tue credenziali per continuare</p>
 
@@ -57,7 +57,7 @@ async function handleSubmit() {
               id="email"
               v-model="email"
               type="email"
-              class="w-full px-3 py-3 md:py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-3 md:py-2 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="nome@esempio.com"
               autocomplete="email"
             />
@@ -71,7 +71,7 @@ async function handleSubmit() {
               id="password"
               v-model="password"
               type="password"
-              class="w-full px-3 py-3 md:py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-3 md:py-2 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="••••••••"
               autocomplete="current-password"
             />

@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAuthStore } from '@/api/authStore'
-import { Save, Lock } from '@lucide/vue'
+import { useThemeStore, type Theme } from '@/stores/themeStore'
+import { Save, Lock, Sun, Moon, Monitor } from '@lucide/vue'
 
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 const displayName = ref(authStore.currentUser?.displayName || '')
 const email = ref(authStore.currentUser?.email || '')
 const saved = ref(false)
+
+const themes: { value: Theme; label: string; icon: typeof Sun }[] = [
+  { value: 'light', label: 'Chiaro', icon: Sun },
+  { value: 'dark', label: 'Scuro', icon: Moon },
+  { value: 'system', label: 'Sistema', icon: Monitor },
+]
 
 function handleSave() {
   saved.value = true
@@ -20,6 +28,7 @@ function handleSave() {
       <h1 class="text-xl font-bold text-foreground mb-6">Impostazioni</h1>
 
       <div class="space-y-6">
+        <!-- Profilo -->
         <div>
           <label class="block text-xs font-medium text-foreground/60 mb-1">Email</label>
           <input
@@ -61,6 +70,28 @@ function handleSave() {
 
         <hr class="border-primary/10" />
 
+        <!-- Aspetto -->
+        <div>
+          <h2 class="text-sm font-medium text-foreground mb-3">Aspetto</h2>
+          <div class="flex gap-3">
+            <button
+              v-for="mode in themes"
+              :key="mode.value"
+              @click="themeStore.setTheme(mode.value)"
+              class="flex-1 px-4 py-3 rounded-lg border text-sm text-center transition-all cursor-pointer"
+              :class="themeStore.theme === mode.value
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-primary/10 text-foreground/70 hover:border-primary/30 hover:bg-primary/5'"
+            >
+              <component :is="mode.icon" class="w-5 h-5 mx-auto mb-1" />
+              {{ mode.label }}
+            </button>
+          </div>
+        </div>
+
+        <hr class="border-primary/10" />
+
+        <!-- Password -->
         <div>
           <h2 class="text-sm font-medium text-foreground mb-3">Password</h2>
           <button

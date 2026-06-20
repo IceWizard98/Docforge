@@ -12,7 +12,6 @@ const email = ref('')
 const password = ref('')
 const passwordConfirm = ref('')
 const displayName = ref('')
-const tenantSlug = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -20,13 +19,7 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const emailValid = computed(() => emailPattern.test(email.value.trim()))
 const passwordMinLength = computed(() => password.value.length >= 8)
 const passwordsMatch = computed(() => password.value === passwordConfirm.value)
-const slugPattern = /^[a-zA-Z0-9-]+$/
-const slugValid = computed(() => !tenantSlug.value || slugPattern.test(tenantSlug.value))
-const formValid = computed(() => emailValid.value && passwordMinLength.value && passwordsMatch.value && displayName.value.trim().length > 0 && slugValid.value)
-
-function sanitizeSlug(val: string): string {
-  return val.trim().replace(/[^a-zA-Z0-9-]/g, '').toLowerCase()
-}
+const formValid = computed(() => emailValid.value && passwordMinLength.value && passwordsMatch.value && displayName.value.trim().length > 0)
 
 async function handleSubmit() {
   if (!formValid.value) return
@@ -35,12 +28,10 @@ async function handleSubmit() {
   error.value = null
 
   try {
-    const slug = tenantSlug.value ? sanitizeSlug(tenantSlug.value) : 'default'
     await authStore.register(
       email.value,
       password.value,
       displayName.value,
-      slug,
     )
     router.push('/workspace/default')
   } catch (e: unknown) {
@@ -60,7 +51,7 @@ async function handleSubmit() {
 <template>
   <div class="h-screen w-screen flex items-center justify-center bg-surface">
     <div class="w-full max-w-sm mx-auto px-6">
-      <div class="bg-white rounded-lg border border-primary/10 p-8">
+      <div class="bg-card rounded-lg border border-primary/10 p-8">
         <h1 class="text-xl font-bold text-foreground mb-1">Registrati</h1>
         <p class="text-sm text-foreground/50 mb-6">Crea il tuo account per iniziare</p>
 
@@ -73,7 +64,7 @@ async function handleSubmit() {
               id="displayName"
               v-model="displayName"
               type="text"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-2 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="Mario Rossi"
             />
           </div>
@@ -86,7 +77,7 @@ async function handleSubmit() {
               id="reg-email"
               v-model="email"
               type="email"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-2 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="nome@esempio.com"
               autocomplete="email"
             />
@@ -100,7 +91,7 @@ async function handleSubmit() {
               id="reg-password"
               v-model="password"
               type="password"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-2 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="Almeno 8 caratteri"
               autocomplete="new-password"
             />
@@ -117,28 +108,12 @@ async function handleSubmit() {
               id="reg-password-confirm"
               v-model="passwordConfirm"
               type="password"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
+              class="w-full px-3 py-2 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
               placeholder="Ripeti la password"
               autocomplete="new-password"
             />
             <p v-if="passwordConfirm && !passwordsMatch" class="mt-1 text-xs text-danger">
               Le password non coincidono
-            </p>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-foreground/60 mb-1" for="tenantSlug">
-              Tenant (opzionale)
-            </label>
-            <input
-              id="tenantSlug"
-              v-model="tenantSlug"
-              type="text"
-              class="w-full px-3 py-2 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-colors duration-150"
-              placeholder="default"
-            />
-            <p v-if="tenantSlug && !slugValid" class="mt-1 text-xs text-danger">
-              Solo lettere, numeri e trattini
             </p>
           </div>
 

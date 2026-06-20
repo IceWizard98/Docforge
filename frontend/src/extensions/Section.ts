@@ -31,6 +31,7 @@ export const Section = Node.create<SectionOptions>({
       sectionId: { default: null },
       number: { default: '' },
       status: { default: 'draft' },
+      title: { default: '' },
       provenance: { default: [] },
     }
   },

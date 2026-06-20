@@ -12,6 +12,18 @@ import type {
   ChatSessionDetailResponse,
 } from '@/types/document'
 
+/**
+ * Single source of truth for turning an axios/unknown error into a user message.
+ * Backend (FastAPI) puts the message in response.data.detail.
+ */
+export function extractApiError(e: unknown, fallback = 'Operazione fallita'): string {
+  const err = e as AxiosError<{ detail?: string }> | undefined
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (err?.message) return err.message
+  return fallback
+}
+
 let isRefreshing = false
 let failedQueue: Array<{
   resolve: (token: string) => void
@@ -67,7 +79,8 @@ apiClient.interceptors.response.use(
       if (refreshToken) {
         try {
           const response = await apiClient.post('/auth/refresh', { refresh_token: refreshToken })
-          const { token } = response.data
+          // Backend /auth/refresh returns TokenResponse { access_token, ... }.
+          const token = response.data.access_token
           localStorage.setItem('auth_token', token)
           if (response.data.refresh_token) {
             localStorage.setItem('refresh_token', response.data.refresh_token)
@@ -117,13 +130,11 @@ export async function register(
   email: string,
   password: string,
   displayName: string,
-  tenantSlug: string,
 ): Promise<AuthResponse> {
   const response = await apiClient.post('/auth/register', {
     email,
     password,
     display_name: displayName,
-    tenant_slug: tenantSlug,
   })
   const data = response.data
   const token = data.token || data.access_token
@@ -184,7 +195,7 @@ export interface SendMessageResponse {
   actions?: ChatActionPayload[]
   patches?: PatchPayload[]
   sources?: SourceRef[]
-  timestamp: string
+  created_at: string
 }
 
 function mapSource(src: any): SourceRef {
@@ -204,7 +215,12 @@ export async function sendMessage(
 ): Promise<SendMessageResponse> {
   const response = await apiClient.post<SendMessageResponse>(`/chat/sessions/${sessionId}/messages`, {
     content,
-    context,
+    edit_context: context
+      ? {
+          section_id: context.activeSectionId,
+          selected_text: context.selectedText,
+        }
+      : undefined,
   })
   const data = response.data
   if (data.sources) {
@@ -276,11 +292,124 @@ export async function diffDocumentVersion(documentId: string, v1: number, v2?: n
   return response.data
 }
 
-export async function createComment(documentId: string, content: string, threadId?: string): Promise<any> {
+export async function deleteDocument(id: string): Promise<void> {
+  await apiClient.delete(`/documents/${id}`)
+}
+
+export async function renameDocument(id: string, title: string): Promise<void> {
+  await apiClient.patch(`/documents/${id}`, { title })
+}
+
+export interface SourceDocumentResponse {
+  id: string
+  document_id: string | null
+  filename: string
+  doc_type?: string
+  language?: string | null
+  jurisdiction?: string | null
+  tags?: string[] | null
+  parties?: string[] | null
+  status?: string
+  metadata?: Record<string, unknown>
+  created_at: string
+}
+
+export async function listSources(documentId: string): Promise<SourceDocumentResponse[]> {
+  const resp = await apiClient.get(`/sources/${documentId}`)
+  return resp.data
+}
+
+export interface SourceListMeta {
+  page: number
+  per_page: number
+  total: number
+}
+
+// Tenant-wide source corpus (not scoped to a single document).
+export async function listAllSources(
+  page = 1,
+  perPage = 50,
+): Promise<{ data: SourceDocumentResponse[]; meta: SourceListMeta }> {
+  const resp = await apiClient.get('/sources', { params: { page, per_page: perPage } })
+  return resp.data
+}
+
+export async function uploadSource(file: File): Promise<SourceDocumentResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const resp = await apiClient.post<SourceDocumentResponse>('/sources/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return resp.data
+}
+
+export async function previewSource(
+  sourceId: string,
+): Promise<{ id: string; filename: string; doc_type: string; status: string; content: Record<string, unknown> }> {
+  const resp = await apiClient.get(`/sources/${sourceId}/preview`)
+  return resp.data
+}
+
+export function sourceDownloadUrl(sourceId: string): string {
+  return `/api/v1/sources/${sourceId}/download`
+}
+
+export async function downloadSource(sourceId: string): Promise<Blob> {
+  const resp = await apiClient.get(`/sources/${sourceId}/download`, { responseType: 'blob' })
+  return resp.data
+}
+
+export async function deleteSource(sourceId: string): Promise<void> {
+  await apiClient.delete(`/sources/${sourceId}`)
+}
+
+// --- Patch sets (surgical, reviewable edits) ---
+export async function applyPatchSet(patchId: string): Promise<{ status: string; new_version: number }> {
+  const resp = await apiClient.post(`/patches/${patchId}/apply`)
+  return resp.data
+}
+
+export interface TemplateResponse {
+  id: string
+  name: string
+  description?: string
+  content?: any
+  category?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export async function listTemplates(params?: { category?: string; doc_type?: string }): Promise<{ data: TemplateResponse[] }> {
+  const resp = await apiClient.get('/templates', { params })
+  return resp.data
+}
+
+export async function createTemplate(data: { name: string; description?: string; content?: any; category?: string }): Promise<TemplateResponse> {
+  const resp = await apiClient.post('/templates', data)
+  return resp.data
+}
+
+export async function getTemplate(id: string): Promise<TemplateResponse> {
+  const resp = await apiClient.get(`/templates/${id}`)
+  return resp.data
+}
+
+export async function updateTemplate(id: string, data: Partial<TemplateResponse>): Promise<TemplateResponse> {
+  const resp = await apiClient.patch(`/templates/${id}`, data)
+  return resp.data
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  await apiClient.delete(`/templates/${id}`)
+}
+
+export async function createComment(documentId: string, content: string, threadId?: string, sectionId?: string, clauseId?: string): Promise<any> {
   const response = await apiClient.post('/comments', {
     document_id: documentId,
     content,
     thread_id: threadId,
+    section_id: sectionId,
+    clause_id: clauseId,
   })
   return response.data
 }
@@ -292,6 +421,11 @@ export async function listComments(documentId: string): Promise<any[]> {
 
 export async function resolveComment(commentId: string): Promise<any> {
   const response = await apiClient.patch(`/comments/${commentId}/resolve`)
+  return response.data
+}
+
+export async function promoteDraft(draftId: string): Promise<DocumentResponse> {
+  const response = await apiClient.post<DocumentResponse>(`/drafts/${draftId}/promote`)
   return response.data
 }
 

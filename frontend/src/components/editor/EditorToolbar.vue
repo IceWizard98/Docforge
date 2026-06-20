@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { Editor } from '@tiptap/core'
 import {
   Bold, Italic, Underline, Strikethrough,
@@ -6,12 +7,14 @@ import {
   List, ListOrdered,
   Quote, Code,
   Undo2, Redo2,
-  Table,
+  Table, PlusSquare, FileText, Eye,
 } from '@lucide/vue'
 
 const props = defineProps<{
   editor: Editor | null | undefined
 }>()
+
+const showProvenance = ref(false)
 
 function isActive(name: string, attrs?: Record<string, unknown>) {
   return props.editor?.isActive(name, attrs) ?? false
@@ -19,6 +22,28 @@ function isActive(name: string, attrs?: Record<string, unknown>) {
 
 function handleTable() {
   props.editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+}
+
+function addSection() {
+  const id = 'sec_' + Date.now().toString(36)
+  props.editor?.chain().focus().insertContent({
+    type: 'section',
+    attrs: { sectionId: id, number: '', status: 'draft' },
+    content: [{ type: 'paragraph' }],
+  }).run()
+}
+
+function addClause() {
+  const id = 'cl_' + Date.now().toString(36)
+  props.editor?.chain().focus().insertContent({
+    type: 'clause',
+    attrs: { clauseId: id, status: 'draft' },
+    content: [{ type: 'paragraph' }],
+  }).run()
+}
+
+function toggleProvenance() {
+  showProvenance.value = !showProvenance.value
 }
 </script>
 
@@ -132,7 +157,33 @@ function handleTable() {
       <Table class="w-4 h-4" />
     </button>
 
+    <span class="w-px h-5 bg-primary/10 mx-0.5" />
+
+    <button
+      class="p-1.5 rounded text-foreground/60 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+      title="Add Section"
+      @click="addSection"
+    >
+      <PlusSquare class="w-4 h-4" />
+    </button>
+    <button
+      class="p-1.5 rounded text-foreground/60 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+      title="Add Clause"
+      @click="addClause"
+    >
+      <FileText class="w-4 h-4" />
+    </button>
+
     <span class="flex-1" />
+
+    <button
+      class="p-1.5 rounded text-foreground/40 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+      :class="{ 'bg-primary/12 text-primary': showProvenance }"
+      title="Toggle Provenance"
+      @click="toggleProvenance"
+    >
+      <Eye class="w-4 h-4" />
+    </button>
 
     <button
       class="p-1.5 rounded text-foreground/40 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"

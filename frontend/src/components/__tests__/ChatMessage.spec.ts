@@ -17,7 +17,7 @@ function makeMessage(overrides: Partial<ChatMessageResponse> = {}): ChatMessageR
     id: '1',
     role: 'user',
     content: 'Hello',
-    timestamp: new Date().toISOString(),
+    created_at: new Date().toISOString(),
     ...overrides,
   }
 }
@@ -73,7 +73,7 @@ describe('ChatMessage.vue', () => {
         message: makeMessage({
           role: 'assistant',
           content: 'Apply this change?',
-          actions: [{ type: 'rewrite_section', label: 'Apply', payload: {} }],
+          actions: [{ action: 'suggest_patches', label: 'Apply', payload: {} }],
         }),
       },
     })
@@ -83,7 +83,7 @@ describe('ChatMessage.vue', () => {
   })
 
   it('emits action event when action button clicked', async () => {
-    const action = { type: 'rewrite_section' as const, label: 'Apply', payload: {} }
+    const action = { action: 'suggest_patches', label: 'Apply', payload: {} }
     const wrapper = mount(ChatMessage, {
       props: {
         message: makeMessage({

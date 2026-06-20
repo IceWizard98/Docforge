@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Bot, User, Check, X, ExternalLink } from '@lucide/vue'
-import type { ChatMessageResponse, ChatActionPayload, PatchPayload, SourceRef } from '@/types/document'
+import { Bot, User, Check, ExternalLink } from '@lucide/vue'
+import type { ChatMessageResponse, ChatActionPayload, SourceRef } from '@/types/document'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import PatchReviewCard from './PatchReviewCard.vue'
 
 const props = defineProps<{
   message: ChatMessageResponse
@@ -11,11 +12,22 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   action: [action: ChatActionPayload]
+  patchApplied: []
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
-const hasActions = computed(() => (props.message.actions?.length || 0) > 0)
-const hasPatches = computed(() => (props.message.patches?.length || 0) > 0)
+// Result actions already applied automatically by ChatDock.handleAssistantResponse —
+// must NOT also be rendered as clickable buttons (would double-apply).
+const AUTO_APPLIED = ['draft_ready', 'section_created', 'clause_inserted', 'section_rewritten']
+// Surgical patch proposals get a granular review card; everything else is a button.
+const patchActions = computed(
+  () => (props.message.actions || []).filter((a) => a.action === 'patches_proposed'),
+)
+const buttonActions = computed(
+  () => (props.message.actions || []).filter(
+    (a) => a.action !== 'patches_proposed' && !AUTO_APPLIED.includes(a.action),
+  ),
+)
 const hasSources = computed(() => (props.message.sources?.length || 0) > 0)
 
 const renderedContent = computed(() => {
@@ -64,9 +76,9 @@ function handleAction(action: ChatActionPayload) {
       </div>
 
       <!-- Action buttons -->
-      <div v-if="hasActions" class="flex flex-wrap gap-2 mt-2">
+      <div v-if="buttonActions.length" class="flex flex-wrap gap-2 mt-2">
         <button
-          v-for="(act, idx) in message.actions"
+          v-for="(act, idx) in buttonActions"
           :key="'action_' + idx"
           class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/15 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           @click="handleAction(act)"
@@ -76,17 +88,15 @@ function handleAction(action: ChatActionPayload) {
         </button>
       </div>
 
-      <!-- Patch preview -->
-      <div v-if="hasPatches" class="mt-2 w-full">
-        <div
-          v-for="patch in message.patches"
-          :key="patch.sectionId"
-          class="px-2.5 py-1.5 rounded-md bg-cta/10 border border-cta/20 text-xs text-foreground/70"
-        >
-          <span class="text-cta font-medium">Patch:</span>
-          Section {{ patch.sectionId }} — {{ patch.operations.length }} operations
-        </div>
-      </div>
+      <!-- Granular patch review -->
+      <PatchReviewCard
+        v-for="(act, idx) in patchActions"
+        :key="'patch_' + idx"
+        :patch-set-id="(act.payload?.patch_set_id as string)"
+        :summary="(act.payload?.summary as string)"
+        :operations="(act.payload?.operations as any[]) || []"
+        @applied="emit('patchApplied')"
+      />
 
       <!-- Source citations -->
       <div v-if="hasSources" class="flex flex-wrap gap-1.5 mt-2">

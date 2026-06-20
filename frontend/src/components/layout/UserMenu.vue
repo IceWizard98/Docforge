@@ -2,9 +2,11 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/api/authStore'
-import { User, ChevronDown, Settings, LogOut } from '@lucide/vue'
+import { User, ChevronDown, Settings, LogOut, Sun, Moon } from '@lucide/vue'
+import { useThemeStore } from '@/stores/themeStore'
 
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 const router = useRouter()
 const open = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
@@ -27,6 +29,10 @@ function handleLogout() {
 function handleSettings() {
   open.value = false
   router.push('/settings')
+}
+
+function handleToggleTheme() {
+  themeStore.toggle()
 }
 
 onMounted(() => {
@@ -61,7 +67,8 @@ onUnmounted(() => {
     >
       <div
         v-if="open"
-        class="absolute right-0 mt-2 w-56 rounded-lg border border-primary/10 bg-white shadow-lg py-1 z-50 origin-top-right"
+        class="absolute right-0 mt-2 w-56 rounded-lg border border-primary/10 bg-card shadow-lg py-1 z-50 origin-top-right"
+        @keydown.escape="open = false"
       >
         <div class="px-3 py-2 border-b border-primary/10">
           <p class="text-sm font-medium text-foreground truncate">
@@ -78,6 +85,17 @@ onUnmounted(() => {
         >
           <Settings class="h-4 w-4" />
           Impostazioni
+        </button>
+
+        <button
+          class="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground/70 hover:text-primary hover:bg-primary/8 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          @click="handleToggleTheme"
+        >
+          <Sun v-if="themeStore.resolvedTheme === 'dark'" class="h-4 w-4" />
+          <Moon v-else class="h-4 w-4" />
+          <template v-if="themeStore.theme === 'light'">Tema: Chiaro</template>
+          <template v-else-if="themeStore.theme === 'dark'">Tema: Scuro</template>
+          <template v-else>Tema: Sistema</template>
         </button>
 
         <div class="border-t border-primary/10 mt-1 pt-1">
