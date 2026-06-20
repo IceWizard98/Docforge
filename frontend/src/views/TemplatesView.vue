@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { extractApiError } from '@/api/client'
 import { useRouter } from 'vue-router'
 import { FileText, Trash2, Plus, Loader2 } from '@lucide/vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -33,7 +34,7 @@ async function fetchTemplates() {
     const resp = await api.listTemplates()
     templates.value = (resp.data || []) as Template[]
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Failed to load templates'
+    error.value = extractApiError(e, 'Failed to load templates')
   } finally {
     loading.value = false
   }
@@ -61,7 +62,7 @@ async function saveTemplate() {
     newName.value = ''
     newDescription.value = ''
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Failed to create template'
+    error.value = extractApiError(e, 'Failed to create template')
   } finally {
     saving.value = false
   }
@@ -74,7 +75,7 @@ async function deleteTemplateItem(id: string) {
     await api.deleteTemplate(id)
     templates.value = templates.value.filter(t => t.id !== id)
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Failed to delete template'
+    error.value = extractApiError(e, 'Failed to delete template')
   }
 }
 
@@ -85,7 +86,7 @@ async function createFromTemplate(tpl: Template) {
     const doc = await api.createDocument(tpl.name, tpl.doc_type || '')
     router.push(`/documents/${doc.id}`)
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Failed to create document from template'
+    error.value = extractApiError(e, 'Failed to create document from template')
   } finally {
     creating.value = false
   }

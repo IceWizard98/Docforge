@@ -4,7 +4,7 @@ import { BookOpen, FileText } from '@lucide/vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ErrorMessage from '@/components/common/ErrorMessage.vue'
-import { listSources } from '@/api/client'
+import { listSources, extractApiError } from '@/api/client'
 import type { SourceDocumentResponse } from '@/api/client'
 
 const props = defineProps<{ documentId: string }>()
@@ -25,7 +25,7 @@ async function fetchSources() {
   try {
     sources.value = await listSources(props.documentId)
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e?.message || 'Failed to load sources'
+    error.value = extractApiError(e, 'Failed to load sources')
   } finally {
     loading.value = false
   }

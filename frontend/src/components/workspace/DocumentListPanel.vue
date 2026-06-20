@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { FileText, Plus, Clock, Upload, Loader2, FileText as FileTextIcon, Pencil, Trash2, Search, Menu, X } from '@lucide/vue'
 import Tooltip from '@/components/common/Tooltip.vue'
 import { useToast } from '@/composables/useToast'
-import { listDocuments, createDocument, uploadDocument, deleteDocument, renameDocument } from '@/api/client'
+import { listDocuments, createDocument, uploadDocument, deleteDocument, renameDocument, extractApiError } from '@/api/client'
 import type { DocumentResponse } from '@/types/document'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -45,7 +45,7 @@ async function fetchDocs() {
   try {
     documents.value = await listDocuments()
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Failed to load documents'
+    error.value = extractApiError(e, 'Failed to load documents')
   } finally {
     loading.value = false
   }
@@ -62,7 +62,7 @@ async function createNew() {
     const doc = await createDocument('Nuovo documento')
     router.push(`/documents/${doc.id}`)
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Creazione fallita'
+    error.value = extractApiError(e, 'Creazione fallita')
   } finally {
     creating.value = false
   }
@@ -88,7 +88,7 @@ async function uploadFile(file: File) {
     await fetchDocs()
     router.push(`/documents/${doc.id}`)
   } catch (e: any) {
-    error.value = e?.response?.data?.detail || e.message || 'Upload fallito'
+    error.value = extractApiError(e, 'Upload fallito')
   } finally {
     uploading.value = false
   }

@@ -1,10 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import apiClient from '@/api/client'
+import apiClient, {
+  acceptPatchOperation,
+  rejectPatchOperation,
+  applyPatchSet,
+  extractApiError,
+} from '@/api/client'
 import type { Suggestion } from '@/types/document'
 
 export async function fetchSuggestions(documentId: string): Promise<Suggestion[]> {
-  const response = await apiClient.get(`/patches/${documentId}`)
+  const response = await apiClient.get(`/patches/document/${documentId}`)
   const body = response.data as { data: { suggestions: Suggestion[] } }
   return body.data?.suggestions || []
 }
@@ -58,32 +63,56 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     }
   }
 
+  function _find(suggestionId: string): Suggestion | undefined {
+    return suggestions.value.find((s) => s.suggestionId === suggestionId)
+  }
+
   async function acceptSuggestion(suggestionId: string) {
+    const sug = _find(suggestionId)
+    if (!sug?.patchSetId) return
     try {
-      await apiClient.post(`/patches/${suggestionId}/accept`)
+      await acceptPatchOperation(sug.patchSetId, suggestionId)
       suggestions.value = suggestions.value.map((s) =>
         s.suggestionId === suggestionId && s.status === 'pending'
           ? { ...s, status: 'accepted' as const }
           : s,
       )
     } catch (err) {
-      error.value = (err as any)?.message || 'Failed to accept'
+      error.value = extractApiError(err, 'Failed to accept')
     }
     clampIndex()
   }
 
   async function rejectSuggestion(suggestionId: string) {
+    const sug = _find(suggestionId)
+    if (!sug?.patchSetId) return
     try {
-      await apiClient.post(`/patches/${suggestionId}/reject`)
+      await rejectPatchOperation(sug.patchSetId, suggestionId)
       suggestions.value = suggestions.value.map((s) =>
         s.suggestionId === suggestionId && s.status === 'pending'
           ? { ...s, status: 'rejected' as const }
           : s,
       )
     } catch (err) {
-      error.value = (err as any)?.message || 'Failed to reject'
+      error.value = extractApiError(err, 'Failed to reject')
     }
     clampIndex()
+  }
+
+  /** Apply every patch set that has accepted operations; returns affected doc ids. */
+  async function applyAccepted(): Promise<void> {
+    const patchSetIds = new Set(
+      suggestions.value
+        .filter((s) => s.status === 'accepted' && s.patchSetId)
+        .map((s) => s.patchSetId as string),
+    )
+    for (const psId of patchSetIds) {
+      try {
+        await applyPatchSet(psId)
+      } catch (err) {
+        error.value = extractApiError(err, 'Failed to apply changes')
+      }
+    }
   }
 
   function acceptAll() {
@@ -119,7 +148,7 @@ export const useSuggestionStore = defineStore('suggestion', () => {
       suggestions.value = items
       activeIndex.value = 0
     } catch (err) {
-      error.value = (err as any)?.message || 'Failed to load suggestions'
+      error.value = extractApiError(err, 'Failed to load suggestions')
     } finally {
       loading.value = false
     }
@@ -145,6 +174,7 @@ export const useSuggestionStore = defineStore('suggestion', () => {
     addSuggestion,
     acceptSuggestion,
     rejectSuggestion,
+    applyAccepted,
     acceptAll,
     rejectAll,
     goNext,

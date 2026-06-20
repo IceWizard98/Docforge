@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { extractApiError } from '@/api/client'
 import { ref, computed } from 'vue'
 import * as api from '@/api/client'
 import type { ChatMessageResponse, ChatSessionListItem, SourceRef } from '@/types/document'
@@ -31,7 +32,7 @@ export const useChatStore = defineStore('chat', () => {
         await selectSession(sessions.value[0].id)
       }
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to load sessions'
+      error.value = extractApiError(e, 'Failed to load sessions')
     } finally {
       sessionLoading.value = false
     }
@@ -47,7 +48,7 @@ export const useChatStore = defineStore('chat', () => {
       const lastAssistant = [...messages.value].reverse().find(m => m.role === 'assistant')
       currentSources.value = (lastAssistant?.sources as SourceRef[]) || []
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to load session'
+      error.value = extractApiError(e, 'Failed to load session')
     } finally {
       sessionLoading.value = false
     }
@@ -75,7 +76,7 @@ export const useChatStore = defineStore('chat', () => {
       await loadSessions(documentId, false)
       return session.id
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to create session'
+      error.value = extractApiError(e, 'Failed to create session')
       return null
     } finally {
       sessionLoading.value = false
@@ -105,7 +106,7 @@ export const useChatStore = defineStore('chat', () => {
       await api.updateChatSession(id, title)
       session.title = title
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to rename session'
+      error.value = extractApiError(e, 'Failed to rename session')
     }
   }
 
@@ -117,7 +118,7 @@ export const useChatStore = defineStore('chat', () => {
         newSession()
       }
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to delete session'
+      error.value = extractApiError(e, 'Failed to delete session')
     }
   }
 
@@ -135,7 +136,7 @@ export const useChatStore = defineStore('chat', () => {
       currentSources.value = (response.sources as SourceRef[]) || []
       return response as unknown as ChatMessageResponse
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to send message'
+      error.value = extractApiError(e, 'Failed to send message')
       return null
     } finally {
       isSending.value = false
@@ -156,7 +157,7 @@ export const useChatStore = defineStore('chat', () => {
       currentSources.value = (response.sources as SourceRef[]) || []
       return response as unknown as ChatMessageResponse
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to send message'
+      error.value = extractApiError(e, 'Failed to send message')
       return null
     } finally {
       isSending.value = false

@@ -4,13 +4,11 @@ import { BookOpen, FileText, UploadCloud, Download, Trash2, RefreshCw } from '@l
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ErrorMessage from '@/components/common/ErrorMessage.vue'
-import {
-  listAllSources,
+import { listAllSources,
   uploadSource,
   downloadSource,
   deleteSource,
-  type SourceDocumentResponse,
-} from '@/api/client'
+  type SourceDocumentResponse, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 
 const { success, error: toastError } = useToast()
@@ -27,7 +25,7 @@ const hasPending = computed(() =>
 )
 
 function extractError(e: any): string {
-  return e?.response?.data?.detail || e?.message || 'Operazione fallita'
+  return extractApiError(e, 'Operazione fallita')
 }
 
 function statusLabel(status?: string): { text: string; cls: string } {

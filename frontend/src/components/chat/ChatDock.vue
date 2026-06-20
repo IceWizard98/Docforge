@@ -9,7 +9,7 @@ import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { useEditorContext } from '@/composables/useEditorContext'
 import { useChatStore } from '@/stores/chatStore'
 import { useDocumentStore } from '@/stores/documentStore'
-import { promoteDraft } from '@/api/client'
+import { promoteDraft, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 import type { ChatActionPayload, SourceRef, ChatMessageResponse } from '@/types/document'
 import type { Editor } from '@tiptap/core'
@@ -176,7 +176,7 @@ async function handlePromote() {
     toast.success('Bozza promossa a documento definitivo')
     router.push(`/documents/${doc.id}`)
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail || e.message || 'Errore durante la promozione della bozza')
+    toast.error(extractApiError(e, 'Errore durante la promozione della bozza'))
   } finally {
     chatStore.promoting = false
   }

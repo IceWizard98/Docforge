@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Check, X, GitPullRequestArrow, Loader2 } from '@lucide/vue'
-import { acceptPatchOperation, rejectPatchOperation, applyPatchSet } from '@/api/client'
+import { acceptPatchOperation, rejectPatchOperation, applyPatchSet, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 
 interface PatchOperation {
@@ -68,7 +68,7 @@ function preview(content: unknown): string {
 }
 
 function extractErr(e: any): string {
-  return e?.response?.data?.detail || e?.message || 'Operazione fallita'
+  return extractApiError(e, 'Operazione fallita')
 }
 
 async function accept(op: PatchOperation) {

@@ -35,6 +35,8 @@ export interface ProvenanceLink {
 
 export interface Suggestion {
   suggestionId: string
+  patchSetId?: string
+  sectionId?: string
   type: 'insert' | 'delete' | 'replace'
   status: 'pending' | 'accepted' | 'rejected'
   rationale?: string

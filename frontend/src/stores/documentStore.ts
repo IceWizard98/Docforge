@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { extractApiError } from '@/api/client'
 import { ref, computed } from 'vue'
 import apiClient from '@/api/client'
 
@@ -70,7 +71,7 @@ export const useDocumentStore = defineStore('document', () => {
         }
       })
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to fetch document'
+      error.value = extractApiError(e, 'Failed to fetch document')
     } finally {
       loading.value = false
     }
@@ -84,7 +85,7 @@ export const useDocumentStore = defineStore('document', () => {
       await apiClient.patch(`/documents/${currentDocId.value}`, { title: newTitle })
       title.value = newTitle
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to update title'
+      error.value = extractApiError(e, 'Failed to update title')
     }
   }
 
@@ -122,7 +123,7 @@ export const useDocumentStore = defineStore('document', () => {
       setContent(json)
       lastSavedAt.value = Date.now()
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to save content'
+      error.value = extractApiError(e, 'Failed to save content')
     } finally {
       isSaving.value = false
     }
@@ -152,7 +153,7 @@ export const useDocumentStore = defineStore('document', () => {
         sections.value[idx] = { ...sections.value[idx], status: newStatus }
       }
     } catch (e: any) {
-      error.value = e?.response?.data?.detail || e.message || 'Failed to update section status'
+      error.value = extractApiError(e, 'Failed to update section status')
     }
   }
 
