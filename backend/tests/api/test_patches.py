@@ -1,8 +1,7 @@
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-
 
 
 def _build_mock_patch(overrides=None):
@@ -171,3 +170,34 @@ class TestRejectOperation:
             f"/api/v1/patches/{uuid.uuid4()}/operations/op_test/reject",
         )
         assert resp.status_code == 401
+
+
+class TestListDocumentSuggestions:
+    @pytest.mark.asyncio
+    async def test_flattens_operations(self, async_client, mock_session, auth_headers):
+        patch = _build_mock_patch()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [patch]
+        mock_session.execute.return_value = result
+
+        doc_id = str(uuid.uuid4())
+        resp = await async_client.get(f"/api/v1/patches/document/{doc_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        suggestions = resp.json()["data"]["suggestions"]
+        assert len(suggestions) == len(patch.operations)
+        s = suggestions[0]
+        assert s["suggestionId"] == "op_test123456"
+        assert s["patchSetId"] == str(patch.id)
+        assert s["type"] == "replace"
+        assert s["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_patch_sets(self, async_client, mock_session, auth_headers):
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        mock_session.execute.return_value = result
+
+        doc_id = str(uuid.uuid4())
+        resp = await async_client.get(f"/api/v1/patches/document/{doc_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["data"]["suggestions"] == []
