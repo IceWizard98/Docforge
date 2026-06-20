@@ -4,6 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from adapters.llm.embeddings import create_embedding_provider
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,10 +51,21 @@ class ContextPackService:
             self._search = HybridSearchService(pgvector, llm_provider)
         else:
             self._search = None
-        self._embedding_fn = embedding_fn or self._default_embedding
+        if embedding_fn is not None:
+            self._embedding_fn = embedding_fn
+        else:
+            from config.settings import get_settings
+            try:
+                settings = get_settings()
+                provider = create_embedding_provider(settings)
+                self._embedding_fn = provider.generate_embedding
+            except Exception:
+                self._embedding_fn = self._default_embedding
 
     async def _default_embedding(self, query: str) -> list[float]:
-        return [0.0] * 384
+        from config.settings import get_settings
+        dimension = getattr(get_settings(), "embedding_dimension", 1536)
+        return [0.0] * dimension
 
     async def build_section_context(  # noqa: PLR0913
         self,
@@ -78,7 +91,9 @@ class ContextPackService:
             return ContextPack()
 
         embedding = await self._embedding_fn(query)
-        results = await self._search.hybrid_search(embedding, query, filters, top_k * 2)
+        results = await self._search.hybrid_search(
+            embedding, query, filters, top_k * 2
+        )
 
         used_chunk_ids = self._get_used_chunk_ids(session_history)
         results = [r for r in results if r.chunk_id not in used_chunk_ids]
@@ -121,7 +136,8 @@ class ContextPackService:
     def build_prompt_context(self, context_pack: ContextPack) -> str:
         parts = []
         for source in context_pack.sources:
-            parts.append(f"--- {source.title} ---")
+            header = source.title or source.doc_id
+            parts.append(f"--- {header} ---")
             for chunk in source.chunks:
                 parts.append(chunk.content)
         return "\n\n".join(parts)

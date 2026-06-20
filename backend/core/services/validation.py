@@ -1,6 +1,7 @@
 import logging
 import re
 
+from core.services.chunking import _node_text
 from ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,61 @@ incomplete clauses, inconsistent style.
 Respond with valid JSON only, no markdown."""
 
 
+def _heading_text(node: dict) -> str:
+    for child in node.get("content", []) or []:
+        if isinstance(child, dict) and child.get("type") == "heading":
+            return _node_text(child)
+    return ""
+
+
+def _normalize_section(node: dict) -> dict:
+    """Flatten a ProseMirror 'section' node into the dict shape this module expects."""
+    attrs = node.get("attrs", {}) if isinstance(node, dict) else {}
+    clauses: list[dict] = []
+    body_parts: list[str] = []
+    for child in node.get("content", []) or []:
+        if not isinstance(child, dict):
+            continue
+        ctype = child.get("type")
+        if ctype == "clause":
+            cattrs = child.get("attrs", {})
+            clauses.append({
+                "clause_id": cattrs.get("clauseId", ""),
+                "number": cattrs.get("number", ""),
+                "content": _node_text(child),
+            })
+        elif ctype != "heading":
+            body_parts.append(_node_text(child))
+    return {
+        "section_id": attrs.get("sectionId", ""),
+        "title": attrs.get("title") or _heading_text(node),
+        "number": attrs.get("number", ""),
+        "content": "\n".join(p for p in body_parts if p),
+        "clauses": clauses,
+    }
+
+
 def _get_sections(doc: dict) -> list[dict]:
+    """Return normalized section dicts.
+
+    Supports both the legacy flat schema (content.sections = [{section_id,...}])
+    and the real ProseMirror schema (content.content = [{type:'section', attrs...}]).
+    """
     content = doc.get("content", {})
-    if isinstance(content, dict):
-        return content.get("sections", [])
-    return []
+    if not isinstance(content, dict):
+        return []
+    # Legacy flat schema.
+    if isinstance(content.get("sections"), list):
+        return content["sections"]
+    # ProseMirror schema.
+    nodes = content.get("content", [])
+    if not isinstance(nodes, list):
+        return []
+    return [
+        _normalize_section(n)
+        for n in nodes
+        if isinstance(n, dict) and n.get("type") == "section"
+    ]
 
 
 def _extract_all_ids(doc: dict) -> set[str]:

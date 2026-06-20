@@ -51,7 +51,6 @@ class ChatMessage:
 @dataclass
 class ChatSession:
     id: str = field(default_factory=lambda: f"chat_{uuid4().hex[:8]}")
-    tenant_id: str = ""
     document_id: str | None = None
     user_id: str = ""
     title: str = ""

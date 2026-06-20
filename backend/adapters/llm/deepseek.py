@@ -1,12 +1,13 @@
 import asyncio
-import json
 import logging
 import random
 
 import httpx
 
+from adapters.llm._openai_compat import build_tools_payload, parse_tools_response
+from adapters.llm.utils import extract_json
 from config.settings import get_settings
-from ports.llm import LLMConfig, LLMProvider
+from ports.llm import LLMConfig, LLMProvider, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,8 @@ CHARS_PER_TOKEN = 4
 
 
 class DeepSeekProvider(LLMProvider):
+    supports_tools = True
+
     def __init__(self, api_key: str = "", model: str = "deepseek-chat", base_url: str = ""):
         settings = get_settings()
         self.api_key = api_key or settings.deepseek_api_key
@@ -28,6 +31,8 @@ class DeepSeekProvider(LLMProvider):
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
+        if not self.api_key:
+            raise ValueError("DeepSeek API key not configured. Set DEEPSEEK_API_KEY in .env")
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -35,7 +40,7 @@ class DeepSeekProvider(LLMProvider):
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=120.0,
+                timeout=300.0,
             )
         return self._client
 
@@ -122,8 +127,18 @@ class DeepSeekProvider(LLMProvider):
                 "messages": [{"role": "user", "content": validated_prompt}],
                 "temperature": cfg.temperature,
                 "max_tokens": cfg.max_tokens,
-                "response_format": {"type": "json_object"},
             },
         )
         content = self._validate_response(data)
-        return json.loads(content)
+        return extract_json(content)
+
+    async def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        config: LLMConfig | None = None,
+    ) -> ToolResult:
+        cfg = config or LLMConfig()
+        payload = build_tools_payload(cfg.model or self.model, messages, tools, cfg)
+        data = await self._post_with_retry("/chat/completions", payload)
+        return parse_tools_response(data)

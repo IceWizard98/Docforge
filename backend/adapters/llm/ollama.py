@@ -1,10 +1,10 @@
 import asyncio
-import json
 import logging
 import random
 
 import httpx
 
+from adapters.llm.utils import extract_json
 from config.settings import get_settings
 from ports.llm import LLMConfig, LLMProvider
 
@@ -120,4 +120,4 @@ class OllamaProvider(LLMProvider):
             },
         )
         content = self._validate_response(data)
-        return json.loads(content)
+        return extract_json(content)
