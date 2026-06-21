@@ -9,6 +9,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { Section } from '@/extensions/Section'
 import { Clause } from '@/extensions/Clause'
 import { Provenance } from '@/extensions/marks/Provenance'
+import { PlaceholderMark } from '@/extensions/marks/PlaceholderMark'
 import { Comment } from '@/extensions/marks/Comment'
 import { Suggestion } from '@/extensions/marks/Suggestion'
 import { DocumentMetaPlugin } from '@/extensions/plugins/DocumentMetaPlugin'
@@ -58,6 +59,7 @@ const extensions: any[] = [
   Section,
   Clause,
   Provenance,
+  PlaceholderMark,
   Comment,
   Suggestion,
   DocumentMetaPlugin(),
