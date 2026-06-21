@@ -1,6 +1,6 @@
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -184,3 +184,40 @@ class TestPromoteDraft:
         )
 
         assert resp.status_code == 400
+
+
+class TestRegenerateSection:
+    @pytest.mark.asyncio
+    async def test_accepts_prosemirror_section_id(
+        self, async_client, mock_session, auth_headers
+    ):
+        """A 'sec_*' ProseMirror id must be accepted (not rejected as non-UUID)
+        and forwarded verbatim to the worker."""
+        draft = _build_mock_draft()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = draft
+        mock_session.execute.return_value = result
+
+        with patch("api.routes.drafts.generate_section_task.delay") as mock_delay:
+            resp = await async_client.post(
+                f"/api/v1/drafts/{draft.id}/sections/sec_ab12cd34/regenerate",
+                json={},
+                headers=auth_headers,
+            )
+
+        assert resp.status_code == 202
+        mock_delay.assert_called_once()
+        assert mock_delay.call_args.kwargs["section_id"] == "sec_ab12cd34"
+
+    @pytest.mark.asyncio
+    async def test_draft_not_found(self, async_client, mock_session, auth_headers):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/drafts/{uuid.uuid4()}/sections/sec_x/regenerate",
+            json={},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404

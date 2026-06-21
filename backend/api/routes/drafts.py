@@ -161,7 +161,7 @@ async def get_draft(
 @router.post("/{draft_id}/sections/{section_id}/regenerate", status_code=status.HTTP_202_ACCEPTED)
 async def regenerate_section(
     draft_id: UUID,
-    section_id: UUID,
+    section_id: str,
     body: SectionRegenerateRequest,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -181,7 +181,7 @@ async def regenerate_section(
 
     generate_section_task.delay(
         draft_id=str(model.id),
-        section_id=str(section_id),
+        section_id=section_id,
         document_id=str(model.document_id) if model.document_id else None,
     )
     logger.info(

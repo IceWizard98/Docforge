@@ -50,12 +50,16 @@ riconducibile al contesto sorgente. NON inventare fatti, clausole, nomi, importi
 o date non presenti nel contesto. Se un'informazione non è nelle fonti, NON
 scriverla come se fosse certa: marcala esplicitamente come segnaposto.
 
+Ogni chunk nel contesto è preceduto da [source_doc_id=... chunk_id=...]: usa
+ESATTAMENTE quei valori quando citi una fonte (mai inventarli).
+
 Write the section in a professional, clear style, split into runs.
 Return a JSON object with:
 - "content": the full section text (concatenation of the runs' text)
-- "provenance": array of {{"source": "...", "confidence": <float>}} for sourced parts
+- "provenance": array of {{"source_doc_id":"...","chunk_id":"...","confidence":<float>}}
+  for sourced parts (i valori presi dalle etichette del contesto)
 - "runs": array of spans, each {{"text": "...",
-    "provenance": {{"source":"...","chunk_id":"...","confidence":<float>}} | null,
+    "provenance": {{"source_doc_id":"...","chunk_id":"...","confidence":<float>}} | null,
     "placeholder": {{"slot_id":"...","reason":"..."}} | null }}
   A run is EITHER sourced (provenance set, placeholder null) OR a placeholder
   (placeholder set, provenance null) for information not found in the sources.
@@ -197,13 +201,17 @@ class DraftService:
         )
 
     def _format_context_pack(self, pack, ctx_svc=None) -> str:
-        if ctx_svc is not None and hasattr(ctx_svc, "build_prompt_context"):
-            return ctx_svc.build_prompt_context(pack)
+        # Expose the real source_doc_id + chunk_id alongside each chunk so the LLM
+        # can cite them verbatim in provenance/runs; a title-only context (as
+        # build_prompt_context produces) leaves provenance unresolvable.
         parts = []
         try:
             for source in pack.sources:
                 for chunk in source.chunks:
-                    parts.append(f"[{chunk.source_doc_id}] {chunk.content[:500]}")
+                    parts.append(
+                        f"[source_doc_id={chunk.source_doc_id} chunk_id={chunk.chunk_id}] "
+                        f"{chunk.content[:500]}"
+                    )
         except AttributeError:
             pass
         return "\n".join(parts)
@@ -252,21 +260,28 @@ class DraftService:
         }]
 
     def _build_provenance(self, raw: list[dict], pack) -> list[dict]:
-        if raw:
-            result = []
-            for p in raw[:5]:
-                source = p.get("source", "")
-                chunk_id, source_doc_id = _resolve_chunk(source, pack)
-                result.append({
-                    "source": source,
-                    # Real source-document UUID (when resolvable) so downstream
-                    # provenance links can satisfy the NOT NULL FK.
-                    "source_doc_id": p.get("source_doc_id") or source_doc_id,
-                    "confidence": p.get("confidence", 0.0),
-                    "chunk_id": chunk_id,
-                })
-            return result
-        return _fallback_provenance(pack)
+        if not raw:
+            return _fallback_provenance(pack)
+        fb_doc, fb_chunk = _first_chunk_ids(pack)
+        result = []
+        for p in raw[:5]:
+            src = p.get("source_doc_id") or p.get("source", "")
+            chunk_id, source_doc_id = _resolve_chunk(src, pack)
+            chunk_id = p.get("chunk_id") or chunk_id
+            source_doc_id = p.get("source_doc_id") or source_doc_id
+            # Guarantee a real source-document id when context exists, so the LLM
+            # echoing an unresolvable free-form "source" still yields a provenance
+            # row that satisfies the promote-time NOT NULL FK.
+            if not source_doc_id and fb_doc:
+                source_doc_id = fb_doc
+                chunk_id = chunk_id or fb_chunk
+            result.append({
+                "source": p.get("source", source_doc_id),
+                "source_doc_id": source_doc_id,
+                "confidence": p.get("confidence", 0.0),
+                "chunk_id": chunk_id,
+            })
+        return result
 
     def _has_context(self, pack) -> bool:
         try:
@@ -326,6 +341,7 @@ def build_section_node(sec: dict, index: int) -> dict:
             "sectionId": section_id,
             "title": sec.get("title", f"Sezione {index + 1}"),
             "number": index + 1,
+            "status": sec.get("status", "draft"),
         },
         "content": [build_section_paragraph(sec)],
     }
@@ -349,6 +365,17 @@ def spec_sections_with_provenance(section_results: list[dict]) -> list[dict]:
         }
         for s in section_results
     ]
+
+
+def _first_chunk_ids(pack) -> tuple[str, str]:
+    """(source_doc_id, chunk_id) of the first chunk in the pack, or ('', '')."""
+    try:
+        for source in pack.sources:
+            for chunk in source.chunks:
+                return chunk.source_doc_id, chunk.chunk_id
+    except AttributeError:
+        pass
+    return "", ""
 
 
 def _resolve_chunk(source_doc_id: str, pack) -> tuple[str, str]:

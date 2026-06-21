@@ -60,11 +60,20 @@ class ContextPackService:
                 provider = create_embedding_provider(settings)
                 self._embedding_fn = provider.generate_embedding
             except Exception:
+                logger.exception(
+                    "Embedding provider unavailable; retrieval will fall back to a "
+                    "zero vector and return no real grounding"
+                )
                 self._embedding_fn = self._default_embedding
 
     async def _default_embedding(self, query: str) -> list[float]:
         from config.settings import get_settings
         dimension = getattr(get_settings(), "embedding_dimension", 1536)
+        logger.warning(
+            "Using zero-vector embedding fallback (dim=%d); corpus retrieval is "
+            "not grounded for this query",
+            dimension,
+        )
         return [0.0] * dimension
 
     async def build_section_context(  # noqa: PLR0913

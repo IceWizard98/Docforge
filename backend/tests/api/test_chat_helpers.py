@@ -10,11 +10,11 @@ from api.routes.chat import (
     _corpus_catalog,
     _document_outline,
     _format_transparency,
-    _section_paragraph,
     _section_title,
     _write_citations,
 )
 from core.services.context import ContextChunk
+from core.services.drafting import build_section_paragraph as _section_paragraph
 from core.services.slot_retrieval import SlotContextPack, SlotFill
 
 
