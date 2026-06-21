@@ -9,6 +9,7 @@ from adapters.llm.factory import get_llm_provider
 from adapters.postgresql.models import DocumentModel, SourceDocumentModel
 from adapters.postgresql.pgvector import PgvectorAdapter
 from config.settings import get_settings
+from core.doc_types import CANONICAL_DOC_TYPES, normalize
 from core.events import DocumentClassified
 from core.services.chunking import ChunkingService, _node_text
 from workers.celery_app import celery_app
@@ -21,7 +22,8 @@ Content:
 {content}
 
 Return a JSON object with:
-- "doc_type": the document type (e.g. "contract", "report", "memo", "letter", "proposal", "other")
+- "doc_type": the document type, chosen STRICTLY from this list: {doc_types}.
+  Use "other" if none fits.
 - "language": the detected language code (e.g. "en", "it", "fr", "de", "es")
 - "tags": an array of 2-5 relevant tag strings describing the document
 - "jurisdiction": the jurisdiction if applicable (e.g. "US", "EU", "UK", "IT", or "")
@@ -66,11 +68,12 @@ def classify_document_task(source_doc_id: str, doc_id: str | None = None) -> Doc
 
                 provider = get_llm_provider()
                 prompt = CLASSIFY_PROMPT_TEMPLATE.format(
-                    content=content[:4000] if content else "(empty)"
+                    content=content[:4000] if content else "(empty)",
+                    doc_types=", ".join(CANONICAL_DOC_TYPES),
                 )
                 result_data = await provider.generate_structured(prompt, dict)
 
-                doc_type = result_data.get("doc_type", "unknown")
+                doc_type = normalize(result_data.get("doc_type"))
                 language = result_data.get("language", "unknown")
                 tags = result_data.get("tags", [])
                 jurisdiction = result_data.get("jurisdiction", "")
