@@ -17,6 +17,7 @@ from adapters.postgresql.base import get_session
 from adapters.postgresql.models import (
     ChatMessageModel,
     ChatSessionModel,
+    CitationModel,
     DocumentModel,
     DraftModel,
     SourceDocumentModel,
@@ -33,7 +34,9 @@ from api.schemas.chat import (
     SessionListItem,
     SessionUpdate,
 )
-from core.services.context import ContextPackService
+from core.doc_types import normalize as normalize_doc_type
+from core.services.context import ContextChunk, ContextPackService
+from core.services.search import RetrievalFilters
 from workers.classification import classify_document_task
 
 logger = logging.getLogger(__name__)
@@ -41,24 +44,125 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-async def _retrieve_source_context(db_session: AsyncSession, query: str) -> str:
+def _doc_type_filter(doc_model) -> RetrievalFilters | None:
+    """Build a doc_type retrieval filter from the open document, or None.
+
+    Scopes corpus retrieval to sources of the same canonical type. Returns None
+    when the type is unknown/free-form ("other") so search stays unfiltered.
+    """
+    if doc_model is None:
+        return None
+    canonical = normalize_doc_type(getattr(doc_model, "doc_type", None))
+    if canonical == "other":
+        return None
+    return RetrievalFilters(doc_type=[canonical])
+
+
+async def _retrieve_source_context(
+    db_session: AsyncSession,
+    query: str,
+    filters: RetrievalFilters | None = None,
+    collector: list[ContextChunk] | None = None,
+) -> str:
     """Semantic retrieval over the uploaded source corpus.
 
     Returns a prompt-ready context string, or "" when nothing relevant is found
     or retrieval is unavailable. Wires the pgvector adapter + LLM reranker so the
-    vector DB is actually queried during composition.
+    vector DB is actually queried during composition. When ``collector`` is given,
+    the retrieved chunks are appended to it (for provenance/citation tracking).
     """
     if not query:
         return ""
     try:
         pgvector = PgvectorAdapter(db_session)
         context_svc = ContextPackService(pgvector=pgvector, llm_provider=get_llm_provider())
-        pack = await context_svc.build_section_context(section_title=query)
+        pack = await context_svc.build_section_context(section_title=query, filters=filters)
         if pack and pack.sources:
+            if collector is not None:
+                for source in pack.sources:
+                    collector.extend(source.chunks)
             return context_svc.build_prompt_context(pack)
     except Exception:
         logger.exception("Failed to retrieve source context")
     return ""
+
+
+async def _build_message_sources(
+    db_session: AsyncSession, chunks: list[ContextChunk]
+) -> list[dict]:
+    """Turn collected retrieval chunks into SourceRef dicts for the chat message.
+
+    Dedups by chunk_id, resolves source filenames in a single batch query, and
+    falls back to the source id as title when the file row is missing.
+    """
+    if not chunks:
+        return []
+    seen: set[str] = set()
+    unique: list[ContextChunk] = []
+    for c in chunks:
+        if c.chunk_id in seen:
+            continue
+        seen.add(c.chunk_id)
+        unique.append(c)
+
+    source_ids: set[uuid.UUID] = set()
+    for c in unique:
+        try:
+            source_ids.add(uuid.UUID(str(c.source_doc_id)))
+        except (ValueError, AttributeError, TypeError):
+            continue
+
+    titles: dict[str, str] = {}
+    if source_ids:
+        result = await db_session.execute(
+            select(SourceDocumentModel).where(SourceDocumentModel.id.in_(source_ids))
+        )
+        for src in result.scalars().all():
+            titles[str(src.id)] = src.filename
+
+    refs: list[dict] = []
+    for c in unique:
+        sid = str(c.source_doc_id)
+        refs.append({
+            "sourceDocId": sid,
+            "title": titles.get(sid, sid),
+            "snippet": (c.content or "")[:160],
+            "chunkId": c.chunk_id,
+            "confidence": round(float(c.relevance_score), 4),
+        })
+    return refs
+
+
+async def _write_citations(
+    db_session: AsyncSession, message_id: uuid.UUID, chunks: list[ContextChunk]
+) -> None:
+    """Persist one CitationModel per unique retrieved chunk backing a message.
+
+    Each insert runs in a savepoint so a stale chunk_id (FK violation) is skipped
+    without poisoning the surrounding transaction.
+    """
+    if not chunks:
+        return
+    seen: set[str] = set()
+    for c in chunks:
+        if c.chunk_id in seen:
+            continue
+        seen.add(c.chunk_id)
+        try:
+            source_uuid = uuid.UUID(str(c.source_doc_id))
+        except (ValueError, AttributeError, TypeError):
+            source_uuid = None
+        try:
+            async with db_session.begin_nested():
+                db_session.add(CitationModel(
+                    id=uuid.uuid4(),
+                    chat_message_id=message_id,
+                    chunk_id=c.chunk_id,
+                    source_doc_id=source_uuid,
+                    confidence=round(float(c.relevance_score), 4),
+                ))
+        except SQLAlchemyError:
+            logger.warning("Skipped citation for chunk %s (FK/constraint)", c.chunk_id)
 
 
 async def _ingest_chat_attachment(
@@ -164,11 +268,17 @@ async def _corpus_catalog(db_session: AsyncSession, limit: int = 30) -> str:
     return "Documenti caricati dall'utente (catalogo):\n" + "\n".join(lines)
 
 
-def _make_corpus_executor(db_session):
-    """Build the tool executor used by the agent (search_corpus / list_documents)."""
+def _make_corpus_executor(db_session, filters=None, collector=None):
+    """Build the tool executor used by the agent (search_corpus / list_documents).
+
+    ``filters`` scopes corpus search (e.g. by doc_type); ``collector`` accumulates
+    the chunks the agent actually retrieved so the caller can build sources/citations.
+    """
     async def _corpus_executor(name: str, args: dict) -> str:
         if name == "search_corpus":
-            found = await _retrieve_source_context(db_session, args.get("query", ""))
+            found = await _retrieve_source_context(
+                db_session, args.get("query", ""), filters=filters, collector=collector
+            )
             return found or "Nessun passaggio rilevante trovato."
         if name == "list_documents":
             cat = await _corpus_catalog(db_session)
@@ -792,7 +902,11 @@ async def send_message(
         if body.edit_context.section_id:
             edit_hint += f"\nL'utente sta lavorando sulla sezione: {body.edit_context.section_id}"
     provider = get_llm_provider()
-    executor = _make_corpus_executor(db_session)
+    retrieval_filters = _doc_type_filter(doc_model)
+    retrieved_chunks: list[ContextChunk] = []
+    executor = _make_corpus_executor(
+        db_session, filters=retrieval_filters, collector=retrieved_chunks
+    )
     user_text = f"{edit_hint}\n\nMessaggio utente: {body.content}".strip()
     result_data = await _generate_chat_reply(provider, system_prompt, user_text, executor)
 
@@ -829,7 +943,11 @@ async def send_message(
                 },
             ]
 
-    sources = result_data.get("sources", [])
+    # Prefer real provenance from what the agent actually retrieved; fall back to
+    # whatever the model declared (typically empty).
+    sources = await _build_message_sources(db_session, retrieved_chunks)
+    if not sources:
+        sources = result_data.get("sources", [])
 
     # Execute document-modification actions (create/insert/rewrite/propose) on the
     # open document. Override actions only when the handler produced a result.
@@ -868,6 +986,10 @@ async def send_message(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to persist assistant message",
         )
+
+    # Persist provenance: one citation per retrieved chunk backing this reply.
+    await _write_citations(db_session, ai_msg.id, retrieved_chunks)
+
     return ChatMessageResponse.model_validate(ai_msg)
 
 

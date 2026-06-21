@@ -100,7 +100,10 @@ class ContextPackService:
 
         groups: dict[str, list] = defaultdict(list)
         for r in results:
-            groups[r.doc_id].append(r)
+            # Group by the source document (corpus file) when known; fall back to
+            # the document_id for chunks that lack source provenance.
+            group_key = getattr(r, "source_doc_id", "") or r.doc_id
+            groups[group_key].append(r)
 
         total_tokens = 0
         sources: list[ContextSource] = []
@@ -118,7 +121,7 @@ class ContextPackService:
                         section_title=r.section_id,
                         chunk_type=None,
                         relevance_score=r.score,
-                        source_doc_id=r.doc_id,
+                        source_doc_id=getattr(r, "source_doc_id", "") or r.doc_id,
                     )
                 )
                 total_tokens += tokens
