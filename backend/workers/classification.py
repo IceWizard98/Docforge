@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from adapters.llm.embeddings import create_embedding_provider
 from adapters.llm.factory import get_llm_provider
@@ -13,6 +12,7 @@ from core.doc_types import CANONICAL_DOC_TYPES, normalize
 from core.events import DocumentClassified
 from core.services.chunking import ChunkingService, _node_text
 from workers.celery_app import celery_app
+from workers.db import worker_session
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +43,11 @@ def _extract_text_from_prosemirror(content: dict | None) -> str:
 def classify_document_task(source_doc_id: str, doc_id: str | None = None) -> DocumentClassified:  # noqa: PLR0915
     try:
         settings = get_settings()
-        engine = create_async_engine(settings.database_url, echo=False)
-        session_factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
 
         async def _run():  # noqa: PLR0915
             from uuid import UUID
 
-            async with session_factory() as session:
+            async with worker_session() as session:
                 src_result = await session.execute(
                     select(SourceDocumentModel).where(
                         SourceDocumentModel.id == UUID(source_doc_id)
