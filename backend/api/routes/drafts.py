@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import ChatMessageModel, ChatSessionModel, DraftModel
+from adapters.postgresql.models import (
+    ChatMessageModel,
+    ChatSessionModel,
+    DraftModel,
+    ProvenanceLinkModel,
+)
 from adapters.postgresql.repositories import DocumentRepository
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.document import DocumentResponse
@@ -21,6 +26,47 @@ from workers.drafting import generate_draft_task, generate_section_task
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
+
+
+def _provenance_links_from_draft(
+    content: dict | None, spec: dict | None, document_id: UUID, version: int
+) -> list[ProvenanceLinkModel]:
+    """Build provenance links pairing draft sections with their source chunks.
+
+    Reads per-section provenance from ``spec['sections']`` (aligned by section
+    order) and the ProseMirror sectionId from ``content``. Only entries with a
+    valid source UUID are kept — ProvenanceLinkModel.source_doc_id is NOT NULL.
+    """
+    if not isinstance(content, dict) or not isinstance(spec, dict):
+        return []
+    spec_sections = spec.get("sections") or []
+    section_nodes = [
+        n for n in content.get("content", [])
+        if isinstance(n, dict) and n.get("type") == "section"
+    ]
+    links: list[ProvenanceLinkModel] = []
+    for idx, node in enumerate(section_nodes):
+        section_id = node.get("attrs", {}).get("sectionId")
+        if idx >= len(spec_sections) or not isinstance(spec_sections[idx], dict):
+            continue
+        for prov in spec_sections[idx].get("provenance") or []:
+            if not isinstance(prov, dict):
+                continue
+            raw_src = prov.get("source_doc_id") or prov.get("source")
+            try:
+                src_uuid = uuid.UUID(str(raw_src))
+            except (ValueError, TypeError):
+                continue
+            links.append(ProvenanceLinkModel(
+                id=uuid.uuid4(),
+                document_id=document_id,
+                source_doc_id=src_uuid,
+                section_id=section_id,
+                chunk_id=prov.get("chunk_id") or None,
+                confidence=prov.get("confidence"),
+                version_number=version,
+            ))
+    return links
 
 
 @router.post("", response_model=DraftResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -191,6 +237,16 @@ async def promote_draft(
             status_code=status.HTTP_409_CONFLICT,
             detail="Promotion failed due to database conflict",
         )
+
+    # Persist provenance links (source -> generated section) for the new document.
+    version = getattr(doc_model, "version", 1) or 1
+    links = _provenance_links_from_draft(draft.content, draft.spec, doc_model.id, version)
+    for link in links:
+        try:
+            async with session.begin_nested():
+                session.add(link)
+        except SQLAlchemyError:
+            logger.warning("Skipped provenance link for section %s", link.section_id)
 
     return DocumentResponse.model_validate(doc_model)
 

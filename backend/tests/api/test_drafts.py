@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from adapters.postgresql.repositories import DocumentRepository
+from api.routes.drafts import _provenance_links_from_draft
 from tests.helpers import build_mock_document
 
 
@@ -25,6 +26,46 @@ def _build_mock_draft(overrides=None):
         for k, v in overrides.items():
             setattr(draft, k, v)
     return draft
+
+
+class TestProvenanceLinksFromDraft:
+    def _content(self):
+        return {"type": "doc", "content": [
+            {"type": "section", "attrs": {"sectionId": "s1"}, "content": []},
+            {"type": "section", "attrs": {"sectionId": "s2"}, "content": []},
+        ]}
+
+    def test_builds_links_for_sourced_sections(self):
+        doc_id = uuid.uuid4()
+        src = uuid.uuid4()
+        spec = {"sections": [
+            {"title": "Parti", "provenance": [
+                {"source_doc_id": str(src), "chunk_id": "chk_1", "confidence": 0.9}]},
+            {"title": "Oggetto", "provenance": []},
+        ]}
+        links = _provenance_links_from_draft(self._content(), spec, doc_id, 1)
+        assert len(links) == 1
+        link = links[0]
+        assert link.document_id == doc_id
+        assert link.source_doc_id == src
+        assert link.section_id == "s1"
+        assert link.chunk_id == "chk_1"
+        assert link.version_number == 1
+
+    def test_empty_when_no_provenance(self):
+        spec = {"sections": [{"title": "Parti"}, {"title": "Oggetto"}]}
+        assert _provenance_links_from_draft(self._content(), spec, uuid.uuid4(), 1) == []
+
+    def test_skips_non_uuid_source(self):
+        spec = {"sections": [
+            {"provenance": [{"source": "nda_acme.pdf", "chunk_id": "c1", "confidence": 0.5}]},
+            {},
+        ]}
+        # "source" not a UUID -> cannot satisfy NOT NULL FK -> skipped
+        assert _provenance_links_from_draft(self._content(), spec, uuid.uuid4(), 1) == []
+
+    def test_handles_missing_content_gracefully(self):
+        assert _provenance_links_from_draft(None, None, uuid.uuid4(), 1) == []
 
 
 class TestPromoteDraft:
