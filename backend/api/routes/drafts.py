@@ -123,6 +123,7 @@ async def start_draft(
     ]
     generate_draft_task.apply_async(
         (
+            str(draft_id),
             str(body.chat_session_id),
             messages,
             str(body.document_id) if body.document_id is not None else None,
@@ -181,8 +182,7 @@ async def regenerate_section(
     generate_section_task.delay(
         draft_id=str(model.id),
         section_id=str(section_id),
-        spec=dict(model.spec or {}),
-        context_pack={},
+        document_id=str(model.document_id) if model.document_id else None,
     )
     logger.info(
         "Section %s regeneration dispatched for draft %s by user %s",

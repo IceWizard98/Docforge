@@ -3,7 +3,51 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.services.context import ContextChunk, ContextPack, ContextPackService, ContextSource
-from core.services.drafting import DraftService
+from core.services.drafting import (
+    DraftService,
+    assemble_draft_content,
+    build_section_node,
+    build_section_paragraph,
+    spec_sections_with_provenance,
+)
+
+
+class TestDraftAssembly:
+    def test_build_section_paragraph_plain(self):
+        node = build_section_paragraph({"content": "Ciao"})
+        assert node["type"] == "paragraph"
+        assert node["content"][0]["text"] == "Ciao"
+        assert "marks" not in node["content"][0]
+
+    def test_build_section_paragraph_runs_marks(self):
+        node = build_section_paragraph({"runs": [
+            {"text": "A", "provenance": {"source_doc_id": "d1", "chunk_id": "c1"}, "placeholder": None},
+            {"text": "B", "provenance": None, "placeholder": {"slot_id": "s", "reason": "r"}},
+        ]})
+        assert node["content"][0]["marks"][0]["type"] == "provenance"
+        assert node["content"][1]["marks"][0]["type"] == "placeholderMark"
+
+    def test_build_section_node_attrs(self):
+        node = build_section_node({"section_id": "sec_x", "title": "T", "content": "c"}, 0)
+        assert node["type"] == "section"
+        assert node["attrs"]["sectionId"] == "sec_x"
+        assert node["attrs"]["number"] == 1
+
+    def test_assemble_draft_content(self):
+        doc = assemble_draft_content([
+            {"section_id": "s1", "title": "A", "content": "x"},
+            {"section_id": "s2", "title": "B", "content": "y"},
+        ])
+        assert doc["type"] == "doc"
+        assert len(doc["content"]) == 2
+        assert doc["content"][1]["attrs"]["sectionId"] == "s2"
+
+    def test_spec_sections_with_provenance(self):
+        out = spec_sections_with_provenance([
+            {"section_id": "s1", "title": "A", "provenance": [{"chunk_id": "c1"}]},
+        ])
+        assert out[0]["section_id"] == "s1"
+        assert out[0]["provenance"][0]["chunk_id"] == "c1"
 
 
 class TestDraftService:

@@ -275,6 +275,82 @@ class DraftService:
             return False
 
 
+def _runs_to_inline(runs: list) -> list[dict]:
+    """Generated per-span runs -> ProseMirror inline text nodes with marks.
+
+    Sourced runs carry the 'provenance' mark; unsourced runs 'placeholderMark',
+    so a hallucinated span can never look grounded. Shared by the chat draft
+    action and the async draft worker.
+    """
+    nodes: list[dict] = []
+    for r in runs or []:
+        if not isinstance(r, dict):
+            continue
+        text = r.get("text", "")
+        if not text:
+            continue
+        node: dict = {"type": "text", "text": text}
+        prov = r.get("provenance") if isinstance(r.get("provenance"), dict) else None
+        ph = r.get("placeholder") if isinstance(r.get("placeholder"), dict) else None
+        if prov:
+            node["marks"] = [{"type": "provenance", "attrs": {
+                "sourceDocId": prov.get("source_doc_id") or prov.get("source", ""),
+                "chunkId": prov.get("chunk_id"),
+                "confidence": prov.get("confidence", 0),
+            }}]
+        elif ph:
+            node["marks"] = [{"type": "placeholderMark", "attrs": {
+                "slotId": ph.get("slot_id"),
+                "reason": ph.get("reason"),
+            }}]
+        nodes.append(node)
+    return nodes
+
+
+def build_section_paragraph(sec: dict) -> dict:
+    """A section's paragraph node, applying per-span marks when runs exist."""
+    runs = sec.get("runs")
+    if isinstance(runs, list) and runs:
+        return {"type": "paragraph", "content": _runs_to_inline(runs)}
+    content = sec.get("content", "")
+    inline = [{"type": "text", "text": content}] if content else []
+    return {"type": "paragraph", "content": inline}
+
+
+def build_section_node(sec: dict, index: int) -> dict:
+    """A top-level ProseMirror section node from a generated section result."""
+    section_id = sec.get("section_id") or f"sec_{uuid4().hex[:8]}"
+    return {
+        "type": "section",
+        "attrs": {
+            "sectionId": section_id,
+            "title": sec.get("title", f"Sezione {index + 1}"),
+            "number": index + 1,
+        },
+        "content": [build_section_paragraph(sec)],
+    }
+
+
+def assemble_draft_content(section_results: list[dict]) -> dict:
+    """Build the full ProseMirror doc from generated section results."""
+    return {
+        "type": "doc",
+        "content": [build_section_node(s, i) for i, s in enumerate(section_results)],
+    }
+
+
+def spec_sections_with_provenance(section_results: list[dict]) -> list[dict]:
+    """Spec section entries carrying provenance (for promote-time links)."""
+    return [
+        {
+            "section_id": s.get("section_id", ""),
+            "title": s.get("title", ""),
+            "provenance": s.get("provenance", []),
+        }
+        for s in section_results
+    ]
+
+
 def _resolve_chunk(source_doc_id: str, pack) -> tuple[str, str]:
     """Return (chunk_id, source_doc_id) for the chunk matching the given source."""
     try:

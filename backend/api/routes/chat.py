@@ -36,6 +36,7 @@ from api.schemas.chat import (
 )
 from core.doc_types import normalize as normalize_doc_type
 from core.services.context import ContextChunk, ContextPackService
+from core.services.drafting import build_section_paragraph
 from core.services.intent import IntentInferenceService
 from core.services.search import RetrievalFilters
 from core.services.slot_retrieval import SlotContextPack, SlotRetrievalService
@@ -59,46 +60,8 @@ def _is_drafting_turn(action_data: dict | None) -> bool:
     return bool(action_data) and action_data.get("type") in _DRAFTING_ACTIONS
 
 
-def _runs_to_inline(runs: list) -> list[dict]:
-    """Convert generated per-span runs into ProseMirror inline text nodes.
-
-    Sourced runs carry the 'provenance' mark; unsourced runs the 'placeholderMark'
-    mark — so a hallucinated span can never look grounded. Mirrors the frontend
-    runsToContent so backend-built and frontend-built content stay consistent.
-    """
-    nodes: list[dict] = []
-    for r in runs or []:
-        if not isinstance(r, dict):
-            continue
-        text = r.get("text", "")
-        if not text:
-            continue
-        node: dict = {"type": "text", "text": text}
-        prov = r.get("provenance") if isinstance(r.get("provenance"), dict) else None
-        ph = r.get("placeholder") if isinstance(r.get("placeholder"), dict) else None
-        if prov:
-            node["marks"] = [{"type": "provenance", "attrs": {
-                "sourceDocId": prov.get("source_doc_id") or prov.get("source", ""),
-                "chunkId": prov.get("chunk_id"),
-                "confidence": prov.get("confidence", 0),
-            }}]
-        elif ph:
-            node["marks"] = [{"type": "placeholderMark", "attrs": {
-                "slotId": ph.get("slot_id"),
-                "reason": ph.get("reason"),
-            }}]
-        nodes.append(node)
-    return nodes
-
-
-def _section_paragraph(sec: dict) -> dict:
-    """Build a section's paragraph node, applying per-span marks when runs exist."""
-    runs = sec.get("runs")
-    if isinstance(runs, list) and runs:
-        return {"type": "paragraph", "content": _runs_to_inline(runs)}
-    content = sec.get("content", "")
-    inline = [{"type": "text", "text": content}] if content else []
-    return {"type": "paragraph", "content": inline}
+# Shared section builders live in core; aliased here for the draft-action path.
+_section_paragraph = build_section_paragraph
 
 
 def _format_transparency(
