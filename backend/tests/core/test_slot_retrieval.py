@@ -55,15 +55,14 @@ class TestSlotRetrievalHappy:
         assert by_id["object"].chunks == []
 
     @pytest.mark.asyncio
-    async def test_doc_type_filter_passed(self):
+    async def test_searches_whole_corpus_unfiltered(self):
         ctx = _ctx_returning({})
         svc = SlotRetrievalService(context_service=ctx)
         await svc.build_slot_context("nda")
-        # every call must carry the doc_type filter
+        # evidence for a slot may live in any source type -> no doc_type scoping
+        assert ctx.build_section_context.await_args_list
         for call in ctx.build_section_context.await_args_list:
-            filters = call.kwargs.get("filters")
-            assert filters is not None
-            assert filters.doc_type == ["nda"]
+            assert call.kwargs.get("filters") is None
 
 
 class TestSlotRetrievalEdge:

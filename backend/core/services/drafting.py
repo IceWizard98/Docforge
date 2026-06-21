@@ -253,14 +253,19 @@ class DraftService:
 
     def _build_provenance(self, raw: list[dict], pack) -> list[dict]:
         if raw:
-            return [
-                {
-                    "source": p.get("source", ""),
+            result = []
+            for p in raw[:5]:
+                source = p.get("source", "")
+                chunk_id, source_doc_id = _resolve_chunk(source, pack)
+                result.append({
+                    "source": source,
+                    # Real source-document UUID (when resolvable) so downstream
+                    # provenance links can satisfy the NOT NULL FK.
+                    "source_doc_id": p.get("source_doc_id") or source_doc_id,
                     "confidence": p.get("confidence", 0.0),
-                    "chunk_id": _find_chunk_id(p.get("source", ""), pack),
-                }
-                for p in raw[:5]
-            ]
+                    "chunk_id": chunk_id,
+                })
+            return result
         return _fallback_provenance(pack)
 
     def _has_context(self, pack) -> bool:
@@ -270,15 +275,16 @@ class DraftService:
             return False
 
 
-def _find_chunk_id(source_doc_id: str, pack) -> str:
+def _resolve_chunk(source_doc_id: str, pack) -> tuple[str, str]:
+    """Return (chunk_id, source_doc_id) for the chunk matching the given source."""
     try:
         for source in pack.sources:
             for chunk in source.chunks:
                 if chunk.source_doc_id == source_doc_id:
-                    return chunk.chunk_id
+                    return chunk.chunk_id, chunk.source_doc_id
     except AttributeError:
         pass
-    return ""
+    return "", ""
 
 
 def _fallback_provenance(pack) -> list[dict]:
@@ -288,6 +294,7 @@ def _fallback_provenance(pack) -> list[dict]:
             for chunk in source.chunks[:3]:
                 result.append({
                     "source": chunk.source_doc_id,
+                    "source_doc_id": chunk.source_doc_id,
                     "confidence": 0.0,
                     "chunk_id": chunk.chunk_id,
                 })

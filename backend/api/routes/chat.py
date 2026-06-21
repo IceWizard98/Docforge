@@ -49,6 +49,15 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # Loaded once: slot schemas are static data files.
 _SLOT_SERVICE = SlotSchemaService()
 
+# Actions that indicate the user is drafting/editing a document (vs just chatting).
+_DRAFTING_ACTIONS = {
+    "draft", "create_section", "insert_clause", "rewrite_section", "propose_patches",
+}
+
+
+def _is_drafting_turn(action_data: dict | None) -> bool:
+    return bool(action_data) and action_data.get("type") in _DRAFTING_ACTIONS
+
 
 def _format_transparency(
     label: str, slot_pack: SlotContextPack, source_titles: list[str]
@@ -88,9 +97,11 @@ async def _compute_transparency(
     if schema is None:
         return None, []
     try:
+        # No reranker here: bucketing doesn't need calibrated scores, and a
+        # per-slot LLM rerank would add N LLM calls to the request path.
         slot_svc = SlotRetrievalService(
             pgvector=PgvectorAdapter(db_session),
-            llm_provider=get_llm_provider(),
+            llm_provider=None,
             slot_service=_SLOT_SERVICE,
         )
         pack = await slot_svc.build_slot_context(candidate)
@@ -99,20 +110,6 @@ async def _compute_transparency(
         return None, []
     titles = [s.get("title", "") for s in sources]
     return _format_transparency(schema.label, pack, titles)
-
-
-def _doc_type_filter(doc_model) -> RetrievalFilters | None:
-    """Build a doc_type retrieval filter from the open document, or None.
-
-    Scopes corpus retrieval to sources of the same canonical type. Returns None
-    when the type is unknown/free-form ("other") so search stays unfiltered.
-    """
-    if doc_model is None:
-        return None
-    canonical = normalize_doc_type(getattr(doc_model, "doc_type", None))
-    if canonical == "other":
-        return None
-    return RetrievalFilters(doc_type=[canonical])
 
 
 async def _retrieve_source_context(
@@ -964,11 +961,11 @@ async def send_message(
         if body.edit_context.section_id:
             edit_hint += f"\nL'utente sta lavorando sulla sezione: {body.edit_context.section_id}"
     provider = get_llm_provider()
-    retrieval_filters = _doc_type_filter(doc_model)
+    # Search the WHOLE corpus: reference sources for a document need not share its
+    # type (e.g. a contract draws on company profiles, NDAs, prior contracts), and
+    # legacy rows may carry un-normalized doc_type values. No doc_type scoping.
     retrieved_chunks: list[ContextChunk] = []
-    executor = _make_corpus_executor(
-        db_session, filters=retrieval_filters, collector=retrieved_chunks
-    )
+    executor = _make_corpus_executor(db_session, filters=None, collector=retrieved_chunks)
     user_text = f"{edit_hint}\n\nMessaggio utente: {body.content}".strip()
     result_data = await _generate_chat_reply(provider, system_prompt, user_text, executor)
 
@@ -1028,6 +1025,14 @@ async def send_message(
         except Exception:
             logger.exception("Failed to apply draft content to document")
 
+    # Transparency only on drafting turns (or when sources were used): a plain
+    # conversational reply shouldn't pay a full per-slot corpus scan.
+    intent_summary, slot_status = None, []
+    if _is_drafting_turn(action_data) or retrieved_chunks:
+        intent_summary, slot_status = await _compute_transparency(
+            db_session, doc_model, body.content, sources
+        )
+
     # Surgical edits are proposed as reviewable PatchSets via the 'propose_patches'
     # / 'rewrite_section' actions above (granular accept/reject), not inline here.
     ai_msg = ChatMessageModel(
@@ -1038,6 +1043,8 @@ async def send_message(
         actions=actions,
         patches=[],
         sources=sources or [],
+        intent_summary=intent_summary,
+        slot_status=slot_status,
     )
     db_session.add(ai_msg)
     try:
@@ -1051,13 +1058,6 @@ async def send_message(
 
     # Persist provenance: one citation per retrieved chunk backing this reply.
     await _write_citations(db_session, ai_msg.id, retrieved_chunks)
-
-    # Transparency: surface inferred type, sources used, and missing slots.
-    intent_summary, slot_status = await _compute_transparency(
-        db_session, doc_model, body.content, sources
-    )
-    ai_msg.intent_summary = intent_summary
-    ai_msg.slot_status = slot_status
 
     return ChatMessageResponse.model_validate(ai_msg)
 

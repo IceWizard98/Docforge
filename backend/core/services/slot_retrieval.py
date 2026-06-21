@@ -8,13 +8,13 @@ the slot's query hint, and only confidently-matched slots count as filled.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
 from core.services.context import ContextChunk, ContextPackService
 from core.services.scoring import Bucket, bucket
-from core.services.search import RetrievalFilters
 from core.services.slot_schema import SlotSchemaService
 
 logger = logging.getLogger(__name__)
@@ -65,22 +65,24 @@ class SlotRetrievalService:
         if schema is None:
             return SlotContextPack(doc_type=doc_type)
 
-        filters = RetrievalFilters(doc_type=[doc_type])
-
-        # Pass 1 — retrieve per slot (isolated failures => empty).
-        retrieved: dict[str, list[ContextChunk]] = {}
-        for slot in schema.slots:
+        # Search the whole corpus per slot: evidence for a slot (e.g. "parties")
+        # may live in any source type, not only documents of this doc_type.
+        async def _retrieve(slot) -> tuple[str, list[ContextChunk]]:
             query = slot.retrieval_query_hint or slot.label
             try:
                 pack = await self._ctx.build_section_context(
-                    section_title=query, filters=filters, top_k=top_k
+                    section_title=query, filters=None, top_k=top_k
                 )
                 chunks = [c for src in pack.sources for c in src.chunks]
             except Exception:
                 logger.exception("Slot retrieval failed for %s/%s", doc_type, slot.id)
                 chunks = []
             chunks.sort(key=lambda c: c.relevance_score, reverse=True)
-            retrieved[slot.id] = chunks
+            return slot.id, chunks
+
+        # Pass 1 — retrieve per slot concurrently (independent queries).
+        pairs = await asyncio.gather(*(_retrieve(s) for s in schema.slots))
+        retrieved: dict[str, list[ContextChunk]] = dict(pairs)
 
         global_max = max(
             (c.relevance_score for chunks in retrieved.values() for c in chunks),

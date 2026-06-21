@@ -129,6 +129,9 @@ class ChatMessageModel(Base):
     source_refs = Column(JSON, nullable=False, default=list)
     action_type = Column(String(32), nullable=True)
     validation = Column(JSON, nullable=False, default=list)
+    # Transparency: one-line "what I understood" + per-slot filled/missing status.
+    intent_summary = Column(Text, nullable=True)
+    slot_status = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

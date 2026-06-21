@@ -8,14 +8,12 @@ import pytest
 from api.routes.chat import (
     _build_message_sources,
     _corpus_catalog,
-    _doc_type_filter,
     _document_outline,
     _format_transparency,
     _section_title,
     _write_citations,
 )
 from core.services.context import ContextChunk
-from core.services.search import RetrievalFilters
 from core.services.slot_retrieval import SlotContextPack, SlotFill
 
 
@@ -78,31 +76,6 @@ async def test_corpus_catalog_empty_when_no_sources():
     session = AsyncMock()
     session.execute = AsyncMock(return_value=result)
     assert await _corpus_catalog(session) == ""
-
-
-# --- Step 1: doc_type retrieval filter ---------------------------------------
-
-class TestDocTypeFilter:
-    def test_canonical_type_builds_filter(self):
-        doc = SimpleNamespace(doc_type="contract")
-        f = _doc_type_filter(doc)
-        assert isinstance(f, RetrievalFilters)
-        assert f.doc_type == ["contract"]
-
-    def test_alias_normalized(self):
-        f = _doc_type_filter(SimpleNamespace(doc_type="Contratto"))
-        assert f.doc_type == ["contract"]
-
-    def test_other_yields_no_filter(self):
-        # Free-form/unknown types normalize to "other" -> search unfiltered.
-        assert _doc_type_filter(SimpleNamespace(doc_type="report")) is None
-
-    def test_empty_yields_no_filter(self):
-        assert _doc_type_filter(SimpleNamespace(doc_type="")) is None
-        assert _doc_type_filter(SimpleNamespace(doc_type=None)) is None
-
-    def test_none_doc_yields_no_filter(self):
-        assert _doc_type_filter(None) is None
 
 
 # --- Step 1: build SourceRef list from collected chunks ----------------------
