@@ -58,14 +58,22 @@ async def _decode_token(token: str) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
     redis = await RedisClient.get_client()
-    if redis is not None:
-        jti = payload.get("jti", token)
-        if await redis.sismember("token_blacklist", jti):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    # Fail closed: if the revocation store is unreachable we cannot prove the
+    # token has NOT been revoked, so we reject rather than silently accept a
+    # possibly-revoked token (availability traded for security, by design).
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token revocation check unavailable, please retry",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    jti = payload.get("jti", token)
+    if await redis.sismember("token_blacklist", jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return payload
 
 

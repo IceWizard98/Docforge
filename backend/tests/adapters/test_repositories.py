@@ -74,3 +74,30 @@ class TestDocumentRepository:
         repo = DocumentRepository(mock_session)
         result = await repo.get_by_id(str(uuid.uuid4()))
         assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_scopes_to_owner(mock_session):
+    """owner_id must add a created_by predicate to the query (real select)."""
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session.execute.return_value = mock_result
+
+    repo = DocumentRepository(mock_session)
+    await repo.get_by_id(str(uuid.uuid4()), owner_id=str(uuid.uuid4()))
+
+    stmt = mock_session.execute.call_args[0][0]
+    assert "created_by" in str(stmt.whereclause)
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_no_owner_filter_when_omitted(mock_session):
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_session.execute.return_value = mock_result
+
+    repo = DocumentRepository(mock_session)
+    await repo.get_by_id(str(uuid.uuid4()))
+
+    stmt = mock_session.execute.call_args[0][0]
+    assert "created_by" not in str(stmt.whereclause)

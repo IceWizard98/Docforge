@@ -22,6 +22,7 @@ from api.schemas.document import (
     DocumentResponse,
     DocumentUpdate,
 )
+from core.doc_types import normalize as normalize_doc_type
 from core.models.document import Document
 from workers.classification import classify_document_task
 
@@ -317,6 +318,7 @@ async def list_documents(
     items, total = await repo.list_documents(
         page, per_page,
         doc_type=doc_type, status=status, tag=tag,
+        owner_id=current_user.user_id,
     )
     return DocumentListResponse(
         data=[DocumentResponse.model_validate(d) for d in items],
@@ -415,7 +417,10 @@ async def upload_document(
         )
 
     doc_uuid = uuid.uuid4()
-    doc_type = ext.lstrip(".")
+    # File extension is NOT a document type — normalize to the canonical set
+    # ("other" until the classifier sets a real type) so doc_type filters and
+    # slot-schema lookups never miss these rows.
+    doc_type = normalize_doc_type(ext.lstrip("."))
     title = Path(file.filename).stem
     storage = MinioStorageAdapter()
     minio_path = f"source/{doc_uuid}/{file.filename}"
@@ -465,7 +470,7 @@ async def get_document(
     session: AsyncSession = Depends(get_session),
 ):
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id)
+    model = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return DocumentResponse.model_validate(model)
@@ -491,7 +496,7 @@ async def update_document(
             )
 
     try:
-        model = await repo.update(doc_id, data)
+        model = await repo.update(doc_id, data, owner_id=current_user.user_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -514,7 +519,9 @@ async def restore_document(
     session: AsyncSession = Depends(get_session),
 ):
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id, include_archived=True)
+    model = await repo.get_by_id(
+        doc_id, include_archived=True, owner_id=current_user.user_id
+    )
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if model.status != "archived":
@@ -541,7 +548,7 @@ async def delete_document(
 ):
     repo = DocumentRepository(session)
     try:
-        deleted = await repo.delete(doc_id)
+        deleted = await repo.delete(doc_id, owner_id=current_user.user_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -564,7 +571,7 @@ async def create_version(
 ):
     """Save current document state as a new version snapshot."""
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id)
+    model = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -599,6 +606,11 @@ async def list_versions(
     session: AsyncSession = Depends(get_session),
 ):
     """List all versions of a document with snapshots."""
+    repo = DocumentRepository(session)
+    if await repo.get_by_id(
+        doc_id, include_archived=True, owner_id=current_user.user_id
+    ) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     result = await session.execute(
         select(DocumentVersionModel)
         .where(
@@ -626,6 +638,11 @@ async def diff_document(
     session: AsyncSession = Depends(get_session),
 ):
     """Compare two versions of a document. Returns structural diff."""
+    repo = DocumentRepository(session)
+    if await repo.get_by_id(
+        doc_id, include_archived=True, owner_id=current_user.user_id
+    ) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     result_v1 = await session.execute(
         select(DocumentVersionModel).where(
             DocumentVersionModel.document_id == doc_id,
@@ -643,9 +660,7 @@ async def diff_document(
         )
         snap_v2 = result_v2.scalar_one_or_none()
     else:
-        repo = DocumentRepository(session)
-        current = await repo.get_by_id(doc_id)
-        snap_v2 = current
+        snap_v2 = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
 
     if snap_v1 is None:
         raise HTTPException(
@@ -693,7 +708,7 @@ async def restore_version(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
 
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id)
+    model = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -736,7 +751,7 @@ async def submit_for_review(
     session: AsyncSession = Depends(get_session),
 ):
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id)
+    model = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if model.status != "draft":
@@ -762,7 +777,7 @@ async def approve_document(
     session: AsyncSession = Depends(get_session),
 ):
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id)
+    model = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if model.status != "in_review":
@@ -789,7 +804,7 @@ async def reject_document(
     session: AsyncSession = Depends(get_session),
 ):
     repo = DocumentRepository(session)
-    model = await repo.get_by_id(doc_id)
+    model = await repo.get_by_id(doc_id, owner_id=current_user.user_id)
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if model.status != "in_review":

@@ -36,7 +36,7 @@ from api.schemas.chat import (
 )
 from core.doc_types import normalize as normalize_doc_type
 from core.services.context import ContextChunk, ContextPackService
-from core.services.drafting import build_section_paragraph
+from core.services.drafting import assemble_draft_content
 from core.services.intent import IntentInferenceService
 from core.services.search import RetrievalFilters
 from core.services.slot_retrieval import SlotContextPack, SlotRetrievalService
@@ -59,9 +59,6 @@ _DRAFTING_ACTIONS = {
 def _is_drafting_turn(action_data: dict | None) -> bool:
     return bool(action_data) and action_data.get("type") in _DRAFTING_ACTIONS
 
-
-# Shared section builders live in core; aliased here for the draft-action path.
-_section_paragraph = build_section_paragraph
 
 
 def _format_transparency(
@@ -256,7 +253,8 @@ async def _ingest_chat_attachment(
             id=source_id,
             document_id=document_id,
             filename=filename,
-            doc_type=ext.lstrip("."),
+            # Extension is not a doc type; normalize ("other" until classified).
+            doc_type=normalize_doc_type(ext.lstrip(".")),
             file_key=stored_path,
             status="uploaded",
             parsed_content=prosemirror,
@@ -616,6 +614,7 @@ async def create_session(
         doc_result = await session.execute(
             select(DocumentModel).where(
                 DocumentModel.id == body.document_id,
+                DocumentModel.created_by == uuid.UUID(current_user.user_id),
             )
         )
         if doc_result.scalar_one_or_none() is None:
@@ -791,21 +790,10 @@ async def _execute_draft_action(
             return None, None, []
 
         draft_id = uuid.uuid4()
-        doc_content = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "section",
-                    "attrs": {
-                        "sectionId": f"sec_{uuid.uuid4().hex[:8]}",
-                        "title": sec.get("title", f"Sezione {i+1}"),
-                        "number": i + 1,
-                    },
-                    "content": [_section_paragraph(sec)],
-                }
-                for i, sec in enumerate(sections)
-            ],
-        }
+        # Single source of truth for section-node assembly, shared with the async
+        # draft worker (build_section_node applies per-span provenance/placeholder
+        # marks and the status attr consistently).
+        doc_content = assemble_draft_content(sections)
 
         draft_model = DraftModel(
             id=draft_id,

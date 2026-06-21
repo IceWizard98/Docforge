@@ -61,19 +61,24 @@ class DocumentRepository:
         return model
 
     async def get_by_id(
-        self, doc_id: str, include_archived: bool = False
+        self, doc_id: str, include_archived: bool = False, owner_id: str | None = None
     ) -> DocumentModel | None:
         query = select(DocumentModel).where(DocumentModel.id == _ensure_uuid(doc_id))
         if not include_archived:
             query = query.where(DocumentModel.status != "archived")
+        if owner_id is not None:
+            query = query.where(DocumentModel.created_by == _ensure_uuid(owner_id))
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def list_documents(
         self, page: int = 1, per_page: int = 20,
         doc_type: str | None = None, status: str | None = None, tag: str | None = None,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentModel], int]:
         base = select(DocumentModel).where(DocumentModel.status != "archived")
+        if owner_id is not None:
+            base = base.where(DocumentModel.created_by == _ensure_uuid(owner_id))
         if doc_type:
             base = base.where(DocumentModel.doc_type == doc_type)
         if status:
@@ -92,8 +97,10 @@ class DocumentRepository:
     def _valid_columns(self) -> set[str]:
         return {c.name for c in DocumentModel.__table__.columns}
 
-    async def update(self, doc_id: str, data: dict) -> DocumentModel | None:
-        model = await self.get_by_id(doc_id)
+    async def update(
+        self, doc_id: str, data: dict, owner_id: str | None = None
+    ) -> DocumentModel | None:
+        model = await self.get_by_id(doc_id, owner_id=owner_id)
         if model is None:
             return None
         valid = self._valid_columns()
@@ -106,8 +113,8 @@ class DocumentRepository:
         await self.session.refresh(model)
         return model
 
-    async def delete(self, doc_id: str) -> bool:
-        model = await self.get_by_id(doc_id)
+    async def delete(self, doc_id: str, owner_id: str | None = None) -> bool:
+        model = await self.get_by_id(doc_id, owner_id=owner_id)
         if model is None:
             return False
         model.status = "archived"

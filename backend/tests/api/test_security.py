@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -41,6 +41,19 @@ class TestAuthBypass:
     ):
         resp = await async_client.request(method, path, json=body or {})
         assert resp.status_code == 401
+
+
+class TestRevocationFailClosed:
+    @pytest.mark.asyncio
+    async def test_503_when_revocation_store_unavailable(
+        self, async_client, auth_headers
+    ):
+        # Redis down -> we cannot prove the token is not revoked -> fail closed.
+        with patch(
+            "adapters.redis.client.RedisClient.get_client", return_value=None
+        ):
+            resp = await async_client.get("/api/v1/documents", headers=auth_headers)
+        assert resp.status_code == 503
 
 
 class TestTokenTampering:

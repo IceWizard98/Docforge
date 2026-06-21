@@ -2,6 +2,8 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+from tests.conftest import TEST_USER_ID
+
 
 def build_mock_document(overrides=None):
     now = datetime.now(UTC)
@@ -14,7 +16,9 @@ def build_mock_document(overrides=None):
     doc.version = 1
     doc.content = {}
     doc.outline = []
-    doc.created_by = uuid.uuid4()
+    # Default owner matches the authenticated test user so ownership-scoped
+    # endpoints resolve; tests for cross-user access override created_by.
+    doc.created_by = uuid.UUID(TEST_USER_ID)
     doc.created_at = now
     doc.updated_at = now
     if overrides:
