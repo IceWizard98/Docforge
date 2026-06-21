@@ -92,6 +92,9 @@ class ChatMessageResponse(BaseModel):
     patches: list[PatchProposal] = []
     sources: list[SourceCitationResponse] = []
     validation: list[dict] = []
+    # Transparency (optional): one-line "what I understood" + per-slot status.
+    intent_summary: str | None = None
+    slot_status: list[dict] = []
     created_at: datetime
 
 

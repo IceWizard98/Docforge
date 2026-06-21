@@ -66,17 +66,22 @@ class IntentInferenceService:
         self._llm = llm
         self._slots = slot_service or SlotSchemaService()
 
+    def detect_doc_type(self, text: str) -> str | None:
+        """Cheap deterministic alias match over free-form text (no LLM)."""
+        if not isinstance(text, str) or not text.strip():
+            return None
+        low = text.lower()
+        for alias, doc_type in self._alias_pairs():
+            if alias in low:
+                return doc_type
+        return None
+
     def _deterministic_doc_type(self, messages: list[dict]) -> str | None:
         """Cheap alias match over the conversation text."""
         text = " ".join(
             str(m.get("content", "")) for m in messages if isinstance(m, dict)
-        ).lower()
-        if not text.strip():
-            return None
-        for alias, doc_type in self._alias_pairs():
-            if alias in text:
-                return doc_type
-        return None
+        )
+        return self.detect_doc_type(text)
 
     def _alias_pairs(self) -> list[tuple[str, str]]:
         pairs: list[tuple[str, str]] = []

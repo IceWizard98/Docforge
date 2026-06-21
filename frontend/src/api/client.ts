@@ -7,6 +7,7 @@ import type {
   ChatActionPayload,
   PatchPayload,
   SourceRef,
+  SlotStatusItem,
   EditorContext,
   ChatSessionListItem,
   ChatSessionDetailResponse,
@@ -195,6 +196,8 @@ export interface SendMessageResponse {
   actions?: ChatActionPayload[]
   patches?: PatchPayload[]
   sources?: SourceRef[]
+  intentSummary?: string | null
+  slotStatus?: SlotStatusItem[]
   created_at: string
 }
 
@@ -205,6 +208,25 @@ function mapSource(src: any): SourceRef {
     snippet: src.snippet ?? src.text ?? undefined,
     chunkId: src.chunk_id ?? src.chunkId ?? undefined,
     confidence: src.confidence ?? 0,
+  }
+}
+
+function mapSlotStatus(s: any) {
+  return {
+    slotId: s.slot_id ?? s.slotId ?? '',
+    label: s.label ?? '',
+    status: s.status ?? 'missing',
+  }
+}
+
+// Map snake_case message extras (sources + transparency) to camelCase in place.
+function mapMessageExtras(data: any): void {
+  if (data.sources) {
+    data.sources = data.sources.map(mapSource)
+  }
+  data.intentSummary = data.intent_summary ?? data.intentSummary ?? null
+  if (data.slot_status) {
+    data.slotStatus = data.slot_status.map(mapSlotStatus)
   }
 }
 
@@ -223,9 +245,7 @@ export async function sendMessage(
       : undefined,
   })
   const data = response.data
-  if (data.sources) {
-    data.sources = data.sources.map(mapSource)
-  }
+  mapMessageExtras(data)
   return data
 }
 
@@ -244,10 +264,11 @@ export async function getChatSession(sessionId: string): Promise<ChatSessionDeta
   const response = await apiClient.get<ChatSessionDetailResponse>(`/chat/sessions/${sessionId}`)
   const data = response.data
   if (data.messages) {
-    data.messages = data.messages.map((msg: any) => ({
-      ...msg,
-      sources: msg.sources ? msg.sources.map(mapSource) : undefined,
-    }))
+    data.messages = data.messages.map((msg: any) => {
+      const m = { ...msg }
+      mapMessageExtras(m)
+      return m
+    })
   }
   return data
 }
@@ -276,9 +297,7 @@ export async function sendMessageWithAttachment(
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   const data = response.data
-  if (data.sources) {
-    data.sources = data.sources.map(mapSource)
-  }
+  mapMessageExtras(data)
   return data
 }
 

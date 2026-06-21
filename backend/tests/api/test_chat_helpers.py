@@ -10,11 +10,13 @@ from api.routes.chat import (
     _corpus_catalog,
     _doc_type_filter,
     _document_outline,
+    _format_transparency,
     _section_title,
     _write_citations,
 )
 from core.services.context import ContextChunk
 from core.services.search import RetrievalFilters
+from core.services.slot_retrieval import SlotContextPack, SlotFill
 
 
 def _section(sid: str, title: str | None = None, status: str = "draft", heading: str | None = None):
@@ -198,3 +200,40 @@ class TestWriteCitations:
         # Should not raise; citation written with source_doc_id=None.
         await _write_citations(session, uuid.uuid4(), chunks)
         assert session.add.call_count == 1
+
+
+# --- Step 6: transparency formatting ------------------------------------------
+
+class TestFormatTransparency:
+    def _pack(self):
+        return SlotContextPack(doc_type="contract", slots=[
+            SlotFill(slot_id="parties", label="Parti", status="filled"),
+            SlotFill(slot_id="object", label="Oggetto", status="missing"),
+            SlotFill(slot_id="governing_law", label="Legge", status="ambiguous"),
+        ])
+
+    def test_summary_mentions_label_and_sources(self):
+        summary, slot_status = _format_transparency(
+            "Contratto", self._pack(), ["nda_acme.pdf", "profilo.pdf"]
+        )
+        assert "Contratto" in summary
+        assert "nda_acme.pdf" in summary
+
+    def test_summary_without_sources(self):
+        summary, _ = _format_transparency("Contratto", self._pack(), [])
+        assert "Contratto" in summary
+        assert "nessuna fonte" in summary.lower()
+
+    def test_slot_status_shape(self):
+        _, slot_status = _format_transparency("Contratto", self._pack(), [])
+        by_id = {s["slot_id"]: s for s in slot_status}
+        assert by_id["parties"]["status"] == "filled"
+        assert by_id["object"]["status"] == "missing"
+        assert by_id["governing_law"]["status"] == "ambiguous"
+        assert by_id["parties"]["label"] == "Parti"
+
+    def test_empty_pack_yields_empty_status(self):
+        summary, slot_status = _format_transparency(
+            "Contratto", SlotContextPack(doc_type="contract", slots=[]), []
+        )
+        assert slot_status == []

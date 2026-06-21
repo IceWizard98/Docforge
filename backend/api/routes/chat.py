@@ -36,12 +36,69 @@ from api.schemas.chat import (
 )
 from core.doc_types import normalize as normalize_doc_type
 from core.services.context import ContextChunk, ContextPackService
+from core.services.intent import IntentInferenceService
 from core.services.search import RetrievalFilters
+from core.services.slot_retrieval import SlotContextPack, SlotRetrievalService
+from core.services.slot_schema import SlotSchemaService
 from workers.classification import classify_document_task
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+# Loaded once: slot schemas are static data files.
+_SLOT_SERVICE = SlotSchemaService()
+
+
+def _format_transparency(
+    label: str, slot_pack: SlotContextPack, source_titles: list[str]
+) -> tuple[str, list[dict]]:
+    """Build the one-line "what I understood" summary + per-slot status list.
+
+    Transparency surface: states the inferred type and which sources backed the
+    reply, and exposes every slot's filled/missing/ambiguous state so the UI can
+    flag what is still needed instead of letting the model invent it.
+    """
+    summary = f"Ho capito: {label}."
+    names = [t for t in source_titles if t][:5]
+    if names:
+        summary += f" Fonti: {', '.join(names)}."
+    else:
+        summary += " Nessuna fonte rilevante trovata."
+    slot_status = [
+        {"slot_id": s.slot_id, "label": s.label, "status": s.status}
+        for s in slot_pack.slots
+    ]
+    return summary, slot_status
+
+
+async def _compute_transparency(
+    db_session: AsyncSession, doc_model, text: str, sources: list[dict]
+) -> tuple[str | None, list[dict]]:
+    """Infer the target doc_type and run per-slot retrieval for transparency.
+
+    Deterministic (no extra LLM call): the type comes from the open document or a
+    keyword match; slot status comes from corpus retrieval. Best-effort — any
+    failure yields no transparency rather than breaking the reply.
+    """
+    candidate = normalize_doc_type(getattr(doc_model, "doc_type", None)) if doc_model else "other"
+    if candidate == "other":
+        candidate = IntentInferenceService(llm=None, slot_service=_SLOT_SERVICE).detect_doc_type(text)
+    schema = _SLOT_SERVICE.get(candidate) if candidate else None
+    if schema is None:
+        return None, []
+    try:
+        slot_svc = SlotRetrievalService(
+            pgvector=PgvectorAdapter(db_session),
+            llm_provider=get_llm_provider(),
+            slot_service=_SLOT_SERVICE,
+        )
+        pack = await slot_svc.build_slot_context(candidate)
+    except Exception:
+        logger.exception("Transparency slot retrieval failed for %s", candidate)
+        return None, []
+    titles = [s.get("title", "") for s in sources]
+    return _format_transparency(schema.label, pack, titles)
 
 
 def _doc_type_filter(doc_model) -> RetrievalFilters | None:
@@ -989,6 +1046,13 @@ async def send_message(
 
     # Persist provenance: one citation per retrieved chunk backing this reply.
     await _write_citations(db_session, ai_msg.id, retrieved_chunks)
+
+    # Transparency: surface inferred type, sources used, and missing slots.
+    intent_summary, slot_status = await _compute_transparency(
+        db_session, doc_model, body.content, sources
+    )
+    ai_msg.intent_summary = intent_summary
+    ai_msg.slot_status = slot_status
 
     return ChatMessageResponse.model_validate(ai_msg)
 

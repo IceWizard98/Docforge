@@ -10,6 +10,8 @@ vi.mock('@lucide/vue', () => ({
   Check: { template: '<span class="lucide-check" />' },
   X: { template: '<span class="lucide-x" />' },
   ExternalLink: { template: '<span class="lucide-external-link" />' },
+  Info: { template: '<span class="lucide-info" />' },
+  AlertTriangle: { template: '<span class="lucide-alert-triangle" />' },
 }))
 
 function makeMessage(overrides: Partial<ChatMessageResponse> = {}): ChatMessageResponse {
@@ -104,5 +106,46 @@ describe('ChatMessage.vue', () => {
     })
     expect(wrapper.text()).toContain('**raw text**')
     expect(wrapper.html()).not.toContain('<strong>')
+  })
+
+  it('shows intent summary when present', () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: makeMessage({
+          role: 'assistant',
+          content: 'ok',
+          intentSummary: 'Ho capito: Contratto. Fonti: nda.pdf.',
+        }),
+      },
+    })
+    expect(wrapper.text()).toContain('Ho capito: Contratto')
+  })
+
+  it('lists only missing/ambiguous slots', () => {
+    const wrapper = mount(ChatMessage, {
+      props: {
+        message: makeMessage({
+          role: 'assistant',
+          content: 'ok',
+          slotStatus: [
+            { slotId: 'parties', label: 'Parti', status: 'filled' },
+            { slotId: 'object', label: 'Oggetto', status: 'missing' },
+            { slotId: 'law', label: 'Legge', status: 'ambiguous' },
+          ],
+        }),
+      },
+    })
+    expect(wrapper.text()).toContain('Informazioni mancanti')
+    expect(wrapper.text()).toContain('Oggetto')
+    expect(wrapper.text()).toContain('Legge')
+    expect(wrapper.text()).not.toContain('Parti')
+  })
+
+  it('renders nothing extra when transparency fields absent', () => {
+    const wrapper = mount(ChatMessage, {
+      props: { message: makeMessage({ role: 'assistant', content: 'plain' }) },
+    })
+    expect(wrapper.text()).not.toContain('Informazioni mancanti')
+    expect(wrapper.text()).not.toContain('Ho capito')
   })
 })

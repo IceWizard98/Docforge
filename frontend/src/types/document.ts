@@ -58,6 +58,12 @@ export interface Comment {
   created_at: string
 }
 
+export interface SlotStatusItem {
+  slotId: string
+  label: string
+  status: 'filled' | 'missing' | 'ambiguous'
+}
+
 export interface ChatMessageResponse {
   id: string
   role: 'user' | 'assistant'
@@ -65,6 +71,8 @@ export interface ChatMessageResponse {
   actions?: ChatActionPayload[]
   patches?: PatchPayload[]
   sources?: SourceRef[]
+  intentSummary?: string | null
+  slotStatus?: SlotStatusItem[]
   created_at: string
 }
 
