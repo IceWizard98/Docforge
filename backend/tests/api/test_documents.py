@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -50,10 +51,6 @@ class TestListDocuments:
 class TestCreateDocument:
     @pytest.mark.asyncio
     async def test_success(self, async_client, mock_session, auth_headers):
-        tenant_result = MagicMock()
-        tenant_result.scalar_one_or_none.return_value = MagicMock(status="active")
-        mock_session.execute.return_value = tenant_result
-
         doc_model = build_mock_document({"title": "New Document"})
 
         with patch.object(DocumentRepository, "create", return_value=doc_model):
@@ -139,9 +136,9 @@ class TestDeleteDocument:
         assert resp.status_code == 204
 
 
-class TestTenantIsolation:
+class TestDocumentNotFound:
     @pytest.mark.asyncio
-    async def test_tenant_a_cannot_access_tenant_b_document(
+    async def test_missing_document_returns_404(
         self, async_client, mock_session, auth_headers
     ):
         result = MagicMock()
@@ -153,3 +150,139 @@ class TestTenantIsolation:
             headers=auth_headers,
         )
         assert resp.status_code == 404
+
+
+class TestRestoreVersion:
+    @pytest.mark.asyncio
+    async def test_restore_success(self, async_client, mock_session, auth_headers):
+        """Restore a document to a previous version."""
+        doc = build_mock_document({"version": 2})
+        version_snap = MagicMock()
+        version_snap.content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "old version"}]}]}
+        version_snap.outline = []
+
+        doc_result = MagicMock()
+        doc_result.scalar_one_or_none.return_value = doc
+        version_result = MagicMock()
+        version_result.scalar_one_or_none.return_value = version_snap
+
+        mock_session.execute = AsyncMock(side_effect=[version_result, doc_result])
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{doc.id}/versions/1/restore",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["version"] == 3  # version was incremented (was 2, now 3)
+
+    @pytest.mark.asyncio
+    async def test_restore_version_not_found(self, async_client, mock_session, auth_headers):
+        """404 when version snapshot not found."""
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{uuid.uuid4()}/versions/1/restore",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_restore_unauthorized(self, async_client, mock_session):
+        """401 when no auth token."""
+        resp = await async_client.post(
+            f"/api/v1/documents/{uuid.uuid4()}/versions/1/restore",
+        )
+        assert resp.status_code == 401
+
+
+class TestApprovalWorkflow:
+    @pytest.mark.asyncio
+    async def test_submit_for_review(self, async_client, mock_session, auth_headers):
+        """Submit a draft for review."""
+        doc = build_mock_document({"status": "draft"})
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = doc
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{doc.id}/submit",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert doc.status == "in_review"
+
+    @pytest.mark.asyncio
+    async def test_approve_document(self, async_client, mock_session, auth_headers):
+        """Approve a document in review."""
+        doc = build_mock_document({"status": "in_review"})
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = doc
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{doc.id}/approve",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert doc.status == "approved"
+
+    @pytest.mark.asyncio
+    async def test_reject_document(self, async_client, mock_session, auth_headers):
+        """Reject a document with reason."""
+        doc = build_mock_document({"status": "in_review"})
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = doc
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{doc.id}/reject",
+            json={"reason": "Needs changes in section 3"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert doc.status == "changes_requested"
+
+    @pytest.mark.asyncio
+    async def test_approve_not_in_review(self, async_client, mock_session, auth_headers):
+        """400 when approving a document not in review."""
+        doc = build_mock_document({"status": "draft"})
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = doc
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{doc.id}/approve",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_approval_not_found(self, async_client, mock_session, auth_headers):
+        """404 when document not found."""
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = result
+
+        resp = await async_client.post(
+            f"/api/v1/documents/{uuid.uuid4()}/submit",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_approval_unauthorized(self, async_client, mock_session):
+        """401 when no auth token."""
+        resp = await async_client.post(
+            f"/api/v1/documents/{uuid.uuid4()}/submit",
+        )
+        assert resp.status_code == 401

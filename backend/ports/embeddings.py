@@ -8,7 +8,7 @@ class EmbeddingStore(ABC):
 
     @abstractmethod
     async def search_similar(
-        self, query_embedding: list[float], limit: int = 10, tenant_id: str = ""
+        self, query_embedding: list[float], limit: int = 10, filters=None
     ) -> list[dict]:
         ...
 

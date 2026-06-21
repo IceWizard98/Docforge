@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useSuggestionStore } from '@/api/suggestionStore'
+import { useDocumentStore } from '@/stores/documentStore'
+import { extractApiError } from '@/api/client'
+import { useToast } from '@/composables/useToast'
 import { useRoute } from 'vue-router'
 import type { Editor } from '@tiptap/core'
 import { Check, X, ChevronLeft, ChevronRight, CheckCheck, XCircle, Loader2 } from '@lucide/vue'
@@ -11,6 +14,8 @@ const props = defineProps<{
 
 const route = useRoute()
 const suggestionStore = useSuggestionStore()
+const documentStore = useDocumentStore()
+const toast = useToast()
 const persisting = ref<Set<string>>(new Set())
 
 const hasSuggestions = computed(() => suggestionStore.totalCount > 0)
@@ -47,7 +52,8 @@ async function persistDecision(suggestionId: string, decision: 'accepted' | 'rej
     } else {
       await suggestionStore.rejectSuggestion(suggestionId)
     }
-  } catch {
+  } catch (e) {
+    toast.error(extractApiError(e, 'Errore nel salvataggio della decisione'))
   } finally {
     persisting.value.delete(suggestionId)
   }
@@ -56,6 +62,11 @@ async function persistDecision(suggestionId: string, decision: 'accepted' | 'rej
 async function persistAll(decision: 'accepted' | 'rejected') {
   for (const s of suggestionStore.pendingSuggestions) {
     await persistDecision(s.suggestionId, decision)
+  }
+  if (decision === 'accepted') {
+    await suggestionStore.applyAccepted()
+    const docId = route.params.id as string
+    if (docId) await documentStore.fetchDocument(docId)
   }
 }
 

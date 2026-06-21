@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from pydantic import ValidationError
 
@@ -33,15 +35,9 @@ class TestLoginRequest:
         with pytest.raises(ValidationError):
             LoginRequest()
 
-    def test_optional_tenant_slug(self):
-        data = LoginRequest(
-            email="user@example.com", password="securepass123", tenant_slug="my-tenant"
-        )
-        assert data.tenant_slug == "my-tenant"
-
-    def test_tenant_slug_omitted(self):
+    def test_valid_input(self):
         data = LoginRequest(email="user@example.com", password="securepass123")
-        assert data.tenant_slug is None
+        assert data.email == "user@example.com"
 
 
 class TestRegisterRequest:
@@ -50,7 +46,6 @@ class TestRegisterRequest:
             email="test@example.com",
             password="securepass123",
             display_name="Test User",
-            tenant_slug="test-tenant",
         )
         assert data.display_name == "Test User"
 
@@ -59,7 +54,6 @@ class TestRegisterRequest:
             RegisterRequest(
                 email="test@example.com",
                 password="securepass123",
-                tenant_slug="test-tenant",
             )
 
     def test_invalid_email_raises(self):
@@ -68,7 +62,6 @@ class TestRegisterRequest:
                 email="bad-email",
                 password="securepass123",
                 display_name="User",
-                tenant_slug="test",
             )
 
     def test_short_password_raises(self):
@@ -77,7 +70,6 @@ class TestRegisterRequest:
                 email="test@example.com",
                 password="short",
                 display_name="User",
-                tenant_slug="test",
             )
 
 
@@ -136,8 +128,9 @@ class TestChatSessionCreate:
         assert data.context_type == "create_new"
 
     def test_with_document_id(self):
-        data = ChatSessionCreate(document_id="doc_123")
-        assert data.document_id == "doc_123"
+        doc_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+        data = ChatSessionCreate(document_id=doc_id)
+        assert data.document_id == doc_id
 
 
 class TestChatMessageRequest:
@@ -146,10 +139,12 @@ class TestChatMessageRequest:
         assert data.content == "Hello"
 
     def test_with_edit_context(self):
-        ctx = EditContext(document_id="doc_1", section_id="sec_1", selected_text="foo")
+        doc_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+        sec_id = "sec_ab12cd34"
+        ctx = EditContext(document_id=doc_id, section_id=sec_id, selected_text="foo")
         data = ChatMessageRequest(content="Hello", edit_context=ctx)
-        assert data.edit_context.document_id == "doc_1"
-        assert data.edit_context.section_id == "sec_1"
+        assert data.edit_context.document_id == doc_id
+        assert data.edit_context.section_id == sec_id
         assert data.edit_context.selected_text == "foo"
 
     def test_edit_context_defaults(self):

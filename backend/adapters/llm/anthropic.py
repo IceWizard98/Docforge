@@ -6,10 +6,68 @@ from functools import lru_cache
 
 import httpx
 
+from adapters.llm.utils import extract_json
 from config.settings import get_settings
-from ports.llm import LLMConfig, LLMProvider
+from ports.llm import LLMConfig, LLMProvider, ToolCall, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _tools_to_anthropic(tools: list[dict]) -> list[dict]:
+    out = []
+    for t in tools:
+        fn = t.get("function", {})
+        out.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return out
+
+
+def _messages_to_anthropic(messages: list[dict]) -> tuple[str, list[dict]]:
+    """Translate OpenAI-style messages into Anthropic (system + content blocks).
+
+    Coalesces consecutive tool results into a single user message so the
+    user/assistant alternation Anthropic requires is preserved.
+    """
+    system_parts: list[str] = []
+    a_msgs: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            if m.get("content"):
+                system_parts.append(m["content"])
+        elif role == "tool":
+            block = {
+                "type": "tool_result",
+                "tool_use_id": m.get("tool_call_id", ""),
+                "content": m.get("content") or "",
+            }
+            if a_msgs and a_msgs[-1]["role"] == "user" and isinstance(a_msgs[-1]["content"], list):
+                a_msgs[-1]["content"].append(block)
+            else:
+                a_msgs.append({"role": "user", "content": [block]})
+        elif role == "assistant" and m.get("tool_calls"):
+            content: list[dict] = []
+            if m.get("content"):
+                content.append({"type": "text", "text": m["content"]})
+            for tc in m["tool_calls"]:
+                fn = tc.get("function", {})
+                try:
+                    inp = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    inp = {}
+                content.append({
+                    "type": "tool_use",
+                    "id": tc.get("id", ""),
+                    "name": fn.get("name", ""),
+                    "input": inp,
+                })
+            a_msgs.append({"role": "assistant", "content": content})
+        else:
+            a_msgs.append({"role": role or "user", "content": m.get("content") or ""})
+    return "\n".join(system_parts), a_msgs
 
 MODEL_MAX_INPUT_TOKENS = {
     "claude-3-5-sonnet-20241022": 200000,
@@ -22,6 +80,8 @@ CHARS_PER_TOKEN = 4
 
 
 class AnthropicProvider(LLMProvider):
+    supports_tools = True
+
     def __init__(
         self, api_key: str = "", model: str = "claude-3-5-sonnet-20241022", base_url: str = ""
     ):
@@ -32,6 +92,8 @@ class AnthropicProvider(LLMProvider):
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
+        if not self.api_key:
+            raise ValueError("Anthropic API key not configured. Set ANTHROPIC_API_KEY in .env")
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
@@ -40,7 +102,7 @@ class AnthropicProvider(LLMProvider):
                     "anthropic-version": "2023-06-01",
                     "Content-Type": "application/json",
                 },
-                timeout=120.0,
+                timeout=300.0,
             )
         return self._client
 
@@ -128,7 +190,42 @@ class AnthropicProvider(LLMProvider):
             },
         )
         text = self._validate_response(data)
-        return json.loads(text)
+        return extract_json(text)
+
+    async def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        config: LLMConfig | None = None,
+    ) -> ToolResult:
+        cfg = config or LLMConfig()
+        system, a_msgs = _messages_to_anthropic(messages)
+        payload: dict = {
+            "model": cfg.model or self.model,
+            "messages": a_msgs,
+            "max_tokens": cfg.max_tokens,
+            "temperature": cfg.temperature,
+        }
+        if system:
+            payload["system"] = system
+        if tools:
+            payload["tools"] = _tools_to_anthropic(tools)
+            payload["tool_choice"] = {"type": "auto"}
+        data = await self._post_with_retry("/messages", payload)
+
+        blocks = data.get("content") or []
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        for b in blocks:
+            if b.get("type") == "text":
+                text_parts.append(b.get("text", ""))
+            elif b.get("type") == "tool_use":
+                tool_calls.append(ToolCall(
+                    id=b.get("id", ""),
+                    name=b.get("name", ""),
+                    arguments=b.get("input") or {},
+                ))
+        return ToolResult(content="".join(text_parts), tool_calls=tool_calls or None)
 
 
 @lru_cache

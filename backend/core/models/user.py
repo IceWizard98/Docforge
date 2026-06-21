@@ -12,19 +12,8 @@ class UserRole(StrEnum):
 
 
 @dataclass
-class Tenant:
-    id: str = field(default_factory=lambda: f"t_{uuid4().hex[:8]}")
-    name: str = ""
-    slug: str = ""
-    config: dict = field(default_factory=dict)
-    status: str = "active"
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-
-
-@dataclass
 class User:
     id: str = field(default_factory=lambda: f"u_{uuid4().hex[:8]}")
-    tenant_id: str = ""
     email: str = ""
     display_name: str = ""
     role: UserRole = UserRole.EDITOR

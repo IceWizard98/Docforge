@@ -12,9 +12,10 @@ export function useEditorContext(editor: { value: Editor | null }) {
     const ed = editor.value
     let cursorPosition: { from: number; to: number } | null = null
     let selectedText: string | null = editorStore.selectedText
+    let activeClauseId: string | null = null
 
     if (ed && !ed.isDestroyed) {
-      const { from, to } = ed.state.selection
+      const { from, to, $from } = ed.state.selection
       if (from !== to) {
         cursorPosition = { from, to }
         if (!selectedText) {
@@ -23,11 +24,19 @@ export function useEditorContext(editor: { value: Editor | null }) {
       } else {
         cursorPosition = { from, to }
       }
+      // Find active clause by walking up from cursor position
+      for (let depth = $from.depth; depth > 0; depth--) {
+        const node = $from.node(depth)
+        if (node.type.name === 'clause') {
+          activeClauseId = node.attrs.clauseId || node.attrs.id || null
+          break
+        }
+      }
     }
 
     return {
       activeSectionId: editorStore.activeSectionId,
-      activeClauseId: null,
+      activeClauseId,
       selectedText,
       mode: 'compose',
       cursorPosition,

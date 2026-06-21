@@ -45,10 +45,25 @@ Section ID: {section_id}
 Ecco il contesto dai documenti sorgente:
 {context_pack}
 
-Write the full content for this section in a professional, clear style.
+REGOLA ANTI-ALLUCINAZIONE (vincolante): ogni affermazione deve essere
+riconducibile al contesto sorgente. NON inventare fatti, clausole, nomi, importi
+o date non presenti nel contesto. Se un'informazione non è nelle fonti, NON
+scriverla come se fosse certa: marcala esplicitamente come segnaposto.
+
+Ogni chunk nel contesto è preceduto da [source_doc_id=... chunk_id=...]: usa
+ESATTAMENTE quei valori quando citi una fonte (mai inventarli).
+
+Write the section in a professional, clear style, split into runs.
 Return a JSON object with:
-- "content": the full section text
-- "provenance": array of {{"source": "...", "confidence": <float>}} if context was used
+- "content": the full section text (concatenation of the runs' text)
+- "provenance": array of {{"source_doc_id":"...","chunk_id":"...","confidence":<float>}}
+  for sourced parts (i valori presi dalle etichette del contesto)
+- "runs": array of spans, each {{"text": "...",
+    "provenance": {{"source_doc_id":"...","chunk_id":"...","confidence":<float>}} | null,
+    "placeholder": {{"slot_id":"...","reason":"..."}} | null }}
+  A run is EITHER sourced (provenance set, placeholder null) OR a placeholder
+  (placeholder set, provenance null) for information not found in the sources.
+- "placeholders": array of {{"slot_id":"...","reason":"..."}} for missing info
 
 Respond with valid JSON only."""
 
@@ -137,12 +152,15 @@ class DraftService:
                 content = result.get("content", "")
                 provenance_raw = result.get("provenance", [])
                 provenance = self._build_provenance(provenance_raw, context_pack)
+                runs = self._build_runs(result, content, provenance)
                 return {
                     "section_id": section_id,
                     "title": section.get("title", ""),
                     "content": content,
                     "status": "draft",
                     "provenance": provenance,
+                    "runs": runs,
+                    "placeholders": [r["placeholder"] for r in runs if r["placeholder"]],
                 }
             except Exception:
                 logger.exception(
@@ -156,6 +174,8 @@ class DraftService:
             "content": "",
             "status": "draft",
             "provenance": self._build_provenance([], context_pack),
+            "runs": [],
+            "placeholders": [],
         }
 
     async def compose_context_pack(
@@ -181,28 +201,87 @@ class DraftService:
         )
 
     def _format_context_pack(self, pack, ctx_svc=None) -> str:
-        if ctx_svc is not None and hasattr(ctx_svc, "build_prompt_context"):
-            return ctx_svc.build_prompt_context(pack)
+        # Expose the real source_doc_id + chunk_id alongside each chunk so the LLM
+        # can cite them verbatim in provenance/runs; a title-only context (as
+        # build_prompt_context produces) leaves provenance unresolvable.
         parts = []
         try:
             for source in pack.sources:
                 for chunk in source.chunks:
-                    parts.append(f"[{chunk.source_doc_id}] {chunk.content[:500]}")
+                    parts.append(
+                        f"[source_doc_id={chunk.source_doc_id} chunk_id={chunk.chunk_id}] "
+                        f"{chunk.content[:500]}"
+                    )
         except AttributeError:
             pass
         return "\n".join(parts)
 
+    def _build_runs(self, result: dict, content: str, provenance: list[dict]) -> list[dict]:
+        """Normalize per-span runs, synthesizing a safe default when absent.
+
+        Each run is either sourced (provenance set) or a placeholder. When the LLM
+        returns no runs, unsourced content is conservatively flagged as a
+        placeholder rather than passed off as sourced (anti-hallucination).
+        """
+        raw_runs = result.get("runs")
+        if isinstance(raw_runs, list) and raw_runs:
+            runs: list[dict] = []
+            for r in raw_runs:
+                if not isinstance(r, dict):
+                    continue
+                prov = r.get("provenance") if isinstance(r.get("provenance"), dict) else None
+                ph = r.get("placeholder") if isinstance(r.get("placeholder"), dict) else None
+                runs.append({
+                    "text": str(r.get("text", "")),
+                    "provenance": prov,
+                    "placeholder": ph,
+                })
+            if runs:
+                return runs
+
+        if not content:
+            return []
+        if provenance:
+            first = provenance[0]
+            return [{
+                "text": content,
+                "provenance": {
+                    "source": first.get("source", ""),
+                    "chunk_id": first.get("chunk_id", ""),
+                    "confidence": first.get("confidence", 0.0),
+                },
+                "placeholder": None,
+            }]
+        # Unsourced content -> placeholder, never silently "sourced".
+        return [{
+            "text": content,
+            "provenance": None,
+            "placeholder": {"slot_id": "", "reason": "Contenuto non riconducibile a una fonte"},
+        }]
+
     def _build_provenance(self, raw: list[dict], pack) -> list[dict]:
-        if raw:
-            return [
-                {
-                    "source": p.get("source", ""),
-                    "confidence": p.get("confidence", 0.0),
-                    "chunk_id": _find_chunk_id(p.get("source", ""), pack),
-                }
-                for p in raw[:5]
-            ]
-        return _fallback_provenance(pack)
+        if not raw:
+            return _fallback_provenance(pack)
+        fb_doc, fb_chunk = _first_chunk_ids(pack)
+        result = []
+        for p in raw[:5]:
+            src = p.get("source_doc_id") or p.get("source", "")
+            chunk_id, source_doc_id = _resolve_chunk(src, pack)
+            chunk_id = p.get("chunk_id") or chunk_id
+            source_doc_id = p.get("source_doc_id") or source_doc_id
+            # Guarantee a real source-document id when context exists, so the LLM
+            # echoing an unresolvable free-form "source" still yields a provenance
+            # row that satisfies the promote-time NOT NULL FK.
+            if not source_doc_id and fb_doc:
+                source_doc_id = fb_doc
+                chunk_id = chunk_id or fb_chunk
+            result.append({
+                "source": p.get("source", source_doc_id),
+                "source_doc_id": source_doc_id,
+                "confidence": p.get("confidence", 0.0),
+                "chunk_id": chunk_id,
+            })
+        return result
 
     def _has_context(self, pack) -> bool:
         try:
@@ -211,15 +290,104 @@ class DraftService:
             return False
 
 
-def _find_chunk_id(source_doc_id: str, pack) -> str:
+def _runs_to_inline(runs: list) -> list[dict]:
+    """Generated per-span runs -> ProseMirror inline text nodes with marks.
+
+    Sourced runs carry the 'provenance' mark; unsourced runs 'placeholderMark',
+    so a hallucinated span can never look grounded. Shared by the chat draft
+    action and the async draft worker.
+    """
+    nodes: list[dict] = []
+    for r in runs or []:
+        if not isinstance(r, dict):
+            continue
+        text = r.get("text", "")
+        if not text:
+            continue
+        node: dict = {"type": "text", "text": text}
+        prov = r.get("provenance") if isinstance(r.get("provenance"), dict) else None
+        ph = r.get("placeholder") if isinstance(r.get("placeholder"), dict) else None
+        if prov:
+            node["marks"] = [{"type": "provenance", "attrs": {
+                "sourceDocId": prov.get("source_doc_id") or prov.get("source", ""),
+                "chunkId": prov.get("chunk_id"),
+                "confidence": prov.get("confidence", 0),
+            }}]
+        elif ph:
+            node["marks"] = [{"type": "placeholderMark", "attrs": {
+                "slotId": ph.get("slot_id"),
+                "reason": ph.get("reason"),
+            }}]
+        nodes.append(node)
+    return nodes
+
+
+def build_section_paragraph(sec: dict) -> dict:
+    """A section's paragraph node, applying per-span marks when runs exist."""
+    runs = sec.get("runs")
+    if isinstance(runs, list) and runs:
+        return {"type": "paragraph", "content": _runs_to_inline(runs)}
+    content = sec.get("content", "")
+    inline = [{"type": "text", "text": content}] if content else []
+    return {"type": "paragraph", "content": inline}
+
+
+def build_section_node(sec: dict, index: int) -> dict:
+    """A top-level ProseMirror section node from a generated section result."""
+    section_id = sec.get("section_id") or f"sec_{uuid4().hex[:8]}"
+    return {
+        "type": "section",
+        "attrs": {
+            "sectionId": section_id,
+            "title": sec.get("title", f"Sezione {index + 1}"),
+            "number": index + 1,
+            "status": sec.get("status", "draft"),
+        },
+        "content": [build_section_paragraph(sec)],
+    }
+
+
+def assemble_draft_content(section_results: list[dict]) -> dict:
+    """Build the full ProseMirror doc from generated section results."""
+    return {
+        "type": "doc",
+        "content": [build_section_node(s, i) for i, s in enumerate(section_results)],
+    }
+
+
+def spec_sections_with_provenance(section_results: list[dict]) -> list[dict]:
+    """Spec section entries carrying provenance (for promote-time links)."""
+    return [
+        {
+            "section_id": s.get("section_id", ""),
+            "title": s.get("title", ""),
+            "provenance": s.get("provenance", []),
+        }
+        for s in section_results
+    ]
+
+
+def _first_chunk_ids(pack) -> tuple[str, str]:
+    """(source_doc_id, chunk_id) of the first chunk in the pack, or ('', '')."""
+    try:
+        for source in pack.sources:
+            for chunk in source.chunks:
+                return chunk.source_doc_id, chunk.chunk_id
+    except AttributeError:
+        pass
+    return "", ""
+
+
+def _resolve_chunk(source_doc_id: str, pack) -> tuple[str, str]:
+    """Return (chunk_id, source_doc_id) for the chunk matching the given source."""
     try:
         for source in pack.sources:
             for chunk in source.chunks:
                 if chunk.source_doc_id == source_doc_id:
-                    return chunk.chunk_id
+                    return chunk.chunk_id, chunk.source_doc_id
     except AttributeError:
         pass
-    return ""
+    return "", ""
 
 
 def _fallback_provenance(pack) -> list[dict]:
@@ -229,6 +397,7 @@ def _fallback_provenance(pack) -> list[dict]:
             for chunk in source.chunks[:3]:
                 result.append({
                     "source": chunk.source_doc_id,
+                    "source_doc_id": chunk.source_doc_id,
                     "confidence": 0.0,
                     "chunk_id": chunk.chunk_id,
                 })

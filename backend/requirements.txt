@@ -24,3 +24,4 @@ openai>=2.0.0
 anthropic>=0.50.0
 email-validator>=2.2.0
 pytesseract>=0.3.10
+pyyaml>=6.0

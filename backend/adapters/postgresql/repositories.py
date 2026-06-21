@@ -1,57 +1,35 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from adapters.postgresql.models import DocumentModel, TenantModel, UserModel
+from adapters.postgresql.models import DocumentModel, UserModel
 from core.models.document import Document
-from core.models.tenant import Tenant, User
+from core.models.user import User
 
 
 def _ensure_uuid(value: str | UUID) -> UUID:
     if isinstance(value, UUID):
         return value
-    return UUID(value)
-
-
-class TenantRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def get_by_slug(self, slug: str) -> TenantModel | None:
-        result = await self.session.execute(
-            select(TenantModel).where(TenantModel.slug == slug)
-        )
-        return result.scalar_one_or_none()
-
-    async def create(self, tenant: Tenant) -> TenantModel:
-        model = TenantModel(
-            name=tenant.name,
-            slug=tenant.slug,
-            config=tenant.config,
-            status=tenant.status,
-        )
-        self.session.add(model)
-        await self.session.flush()
-        return model
+    try:
+        return UUID(value)
+    except (ValueError, AttributeError):
+        raise ValueError(f"Invalid UUID value: {value!r}")
 
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_email(self, tenant_id: str, email: str) -> UserModel | None:
+    async def get_by_email(self, email: str) -> UserModel | None:
         result = await self.session.execute(
-            select(UserModel).where(
-                UserModel.tenant_id == _ensure_uuid(tenant_id),
-                UserModel.email == email,
-            )
+            select(UserModel).where(UserModel.email == email)
         )
         return result.scalar_one_or_none()
 
     async def create(self, user: User, password_hash: str) -> UserModel:
         model = UserModel(
-            tenant_id=_ensure_uuid(user.tenant_id) if user.tenant_id else None,
             email=user.email,
             display_name=user.display_name,
             role=user.role.value if hasattr(user.role, 'value') else user.role,
@@ -69,7 +47,6 @@ class DocumentRepository:
 
     async def create(self, doc: Document, content: dict) -> DocumentModel:
         model = DocumentModel(
-            tenant_id=_ensure_uuid(doc.tenant_id) if doc.tenant_id else None,
             title=doc.title,
             doc_type=doc.doc_type,
             status=doc.status.value if hasattr(doc.status, 'value') else doc.status,
@@ -80,27 +57,36 @@ class DocumentRepository:
         )
         self.session.add(model)
         await self.session.flush()
+        await self.session.refresh(model)
         return model
 
     async def get_by_id(
-        self, doc_id: str, tenant_id: str, include_archived: bool = False
+        self, doc_id: str, include_archived: bool = False, owner_id: str | None = None
     ) -> DocumentModel | None:
-        query = select(DocumentModel).where(
-            DocumentModel.id == _ensure_uuid(doc_id),
-            DocumentModel.tenant_id == _ensure_uuid(tenant_id),
-        )
+        query = select(DocumentModel).where(DocumentModel.id == _ensure_uuid(doc_id))
         if not include_archived:
             query = query.where(DocumentModel.status != "archived")
+        if owner_id is not None:
+            query = query.where(DocumentModel.created_by == _ensure_uuid(owner_id))
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_tenant(
-        self, tenant_id: str, page: int = 1, per_page: int = 20
+    async def list_documents(
+        self, page: int = 1, per_page: int = 20,
+        doc_type: str | None = None, status: str | None = None, tag: str | None = None,
+        owner_id: str | None = None,
     ) -> tuple[list[DocumentModel], int]:
-        base = select(DocumentModel).where(
-            DocumentModel.tenant_id == _ensure_uuid(tenant_id),
-            DocumentModel.status != "archived",
-        )
+        base = select(DocumentModel).where(DocumentModel.status != "archived")
+        if owner_id is not None:
+            base = base.where(DocumentModel.created_by == _ensure_uuid(owner_id))
+        if doc_type:
+            base = base.where(DocumentModel.doc_type == doc_type)
+        if status:
+            base = base.where(DocumentModel.status == status)
+        if tag:
+            # tags is a plain JSON column; cast to JSONB so the @> containment
+            # operator is valid (plain json has no contains/@> operator in PG).
+            base = base.where(cast(DocumentModel.tags, JSONB).contains([tag]))
         total = await self.session.scalar(select(func.count()).select_from(base.subquery())) or 0
         offset = (page - 1) * per_page
         result = await self.session.execute(
@@ -111,8 +97,10 @@ class DocumentRepository:
     def _valid_columns(self) -> set[str]:
         return {c.name for c in DocumentModel.__table__.columns}
 
-    async def update(self, doc_id: str, tenant_id: str, data: dict) -> DocumentModel | None:
-        model = await self.get_by_id(doc_id, tenant_id)
+    async def update(
+        self, doc_id: str, data: dict, owner_id: str | None = None
+    ) -> DocumentModel | None:
+        model = await self.get_by_id(doc_id, owner_id=owner_id)
         if model is None:
             return None
         valid = self._valid_columns()
@@ -122,10 +110,11 @@ class DocumentRepository:
         for key, value in data.items():
             setattr(model, key, value)
         await self.session.flush()
+        await self.session.refresh(model)
         return model
 
-    async def delete(self, doc_id: str, tenant_id: str) -> bool:
-        model = await self.get_by_id(doc_id, tenant_id)
+    async def delete(self, doc_id: str, owner_id: str | None = None) -> bool:
+        model = await self.get_by_id(doc_id, owner_id=owner_id)
         if model is None:
             return False
         model.status = "archived"

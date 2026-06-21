@@ -96,7 +96,7 @@ async function handleAddComment() {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col min-h-0 flex-1">
     <!-- Header -->
     <div class="flex items-center gap-2 px-4 py-3 border-b border-primary/10">
       <MessageSquare class="w-4 h-4 text-primary" />
@@ -118,7 +118,7 @@ async function handleAddComment() {
       <div class="flex gap-2">
         <input
           v-model="newCommentText"
-          class="flex-1 px-2 py-1.5 text-sm bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          class="flex-1 px-2 py-1.5 text-sm bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           placeholder="Add a comment..."
           @keydown.enter="handleAddComment"
         />
@@ -153,6 +153,8 @@ async function handleAddComment() {
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-xs font-medium text-foreground">{{ thread.author }}</span>
+                <span v-if="thread.section_id" class="text-[10px] bg-primary/10 text-primary px-1 rounded">S:{{ thread.section_id.slice(-6) }}</span>
+                <span v-if="thread.clause_id" class="text-[10px] bg-secondary/10 text-secondary px-1 rounded">C:{{ thread.clause_id.slice(-6) }}</span>
                 <span class="text-[10px] text-foreground/40">{{ formatDate(thread.created_at) }}</span>
               </div>
               <p class="text-sm text-foreground/80">{{ thread.content }}</p>
@@ -185,7 +187,7 @@ async function handleAddComment() {
           <div class="mt-2 flex gap-2">
             <input
               v-model="replyTexts[thread.id]"
-              class="flex-1 px-2 py-1 text-xs bg-white border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              class="flex-1 px-2 py-1 text-xs bg-card border border-primary/10 rounded-md text-foreground placeholder-foreground/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               placeholder="Write a reply..."
               @keydown.enter="handleAddReply(thread.id)"
             />

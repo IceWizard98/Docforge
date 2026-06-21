@@ -35,6 +35,8 @@ export interface ProvenanceLink {
 
 export interface Suggestion {
   suggestionId: string
+  patchSetId?: string
+  sectionId?: string
   type: 'insert' | 'delete' | 'replace'
   status: 'pending' | 'accepted' | 'rejected'
   rationale?: string
@@ -48,10 +50,18 @@ export interface Comment {
   id: string
   document_id: string
   thread_id: string | null
+  section_id: string | null
+  clause_id: string | null
   author: string
   content: string
   resolved: boolean
   created_at: string
+}
+
+export interface SlotStatusItem {
+  slotId: string
+  label: string
+  status: 'filled' | 'missing' | 'ambiguous'
 }
 
 export interface ChatMessageResponse {
@@ -61,12 +71,15 @@ export interface ChatMessageResponse {
   actions?: ChatActionPayload[]
   patches?: PatchPayload[]
   sources?: SourceRef[]
-  timestamp: string
+  intentSummary?: string | null
+  slotStatus?: SlotStatusItem[]
+  created_at: string
 }
 
 export interface ChatActionPayload {
-  type: 'create_section' | 'rewrite_section' | 'suggest_change' | 'insert_clause'
+  action: string
   label: string
+  icon?: string | null
   payload: Record<string, unknown>
 }
 
@@ -95,17 +108,20 @@ export interface DiffSummary {
 export interface DocumentResponse {
   id: string
   title: string
+  doc_type: string
   status: string
+  language: string
   version: number
+  content?: ProseMirrorJSON
+  outline?: OutlineEntry[]
   sections: Array<{
     id: string
     number: string
     title: string
     status: string
   }>
-  content?: ProseMirrorJSON
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 export interface DocumentSpec {
@@ -128,17 +144,17 @@ export interface ValidationIssue {
 export interface ChatSessionListItem {
   id: string
   title: string
-  lastMessagePreview: string
-  createdAt: string
-  updatedAt: string
+  last_message_preview: string
+  created_at: string
+  updated_at: string
 }
 
 export interface ChatSessionDetailResponse {
   id: string
   title: string
   messages: ChatMessageResponse[]
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 export interface EditorContext {

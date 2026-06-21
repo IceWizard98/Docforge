@@ -1,9 +1,10 @@
 """012_fulltext_search
 
-Revision ID: 012
-Revises: 011
+Revision ID: 013
+Revises: 012
 """
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import TSVECTOR
 
 from alembic import op
 
@@ -16,7 +17,7 @@ def upgrade():
 
     op.add_column(
         "document_chunks",
-        sa.Column("tsv_content", sa.TSVECTOR(), nullable=True),
+        sa.Column("tsv_content", TSVECTOR(), nullable=True),
     )
 
     op.create_index(

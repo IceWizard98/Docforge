@@ -1,11 +1,13 @@
 from uuid import uuid4
 
+from core.services.validation import _get_sections
+
 
 class DiffService:
     def compute_diff(self, before: dict, after: dict, version_from: int, version_to: int) -> dict:
         operations: list[dict] = []
-        before_sections = before.get("content", {}).get("sections", [])
-        after_sections = after.get("content", {}).get("sections", [])
+        before_sections = _get_sections(before)
+        after_sections = _get_sections(after)
 
         before_map = {s.get("section_id", ""): s for s in before_sections}
         after_map = {s.get("section_id", ""): s for s in after_sections}

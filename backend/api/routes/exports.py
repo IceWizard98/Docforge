@@ -1,5 +1,8 @@
+from uuid import UUID, uuid4
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
@@ -19,42 +22,45 @@ router = APIRouter(prefix="/exports", tags=["exports"])
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_export(
-    doc_id: str,
+    doc_id: UUID,
     body: ExportCreate,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    import uuid
-
     result = await session.execute(
         select(DocumentModel).where(
-            DocumentModel.id == uuid.UUID(doc_id),
-            DocumentModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            DocumentModel.id == doc_id,
         )
     )
     doc = result.scalar_one_or_none()
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    export_id = uuid.uuid4()
+    export_id = uuid4()
     from adapters.postgresql.models import AuditEventModel
 
     audit = AuditEventModel(
         id=export_id,
-        tenant_id=uuid.UUID(current_user.tenant_id),
-        user_id=uuid.UUID(current_user.user_id),
+        user_id=UUID(current_user.user_id),
         event_type="export_created",
         entity_type="document",
-        entity_id=doc_id,
+        entity_id=str(doc_id),
         payload={"format": body.format, "status": "processing"},
     )
     session.add(audit)
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Export already exists",
+        )
 
     _EXPORT_STATUS[str(export_id)] = "processing"
 
-    doc_data = {"id": doc_id, "title": doc.title, "content": doc.content, "version": doc.version}
-    export_document_task.delay(str(export_id), doc_id, doc_data, body.format)
+    doc_data = {"id": str(doc_id), "title": doc.title, "content": doc.content, "version": doc.version}
+    export_document_task.delay(str(export_id), str(doc_id), doc_data, body.format)
 
     return ExportResponse(
         id=str(export_id),
@@ -69,19 +75,17 @@ async def create_export(
 
 @router.get("/{export_id}", response_model=ExportResponse)
 async def get_export(
-    export_id: str,
+    export_id: UUID,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    import uuid
-
     from adapters.postgresql.models import AuditEventModel
 
     result = await session.execute(
         select(AuditEventModel).where(
-            AuditEventModel.id == uuid.UUID(export_id),
-            AuditEventModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            AuditEventModel.id == export_id,
             AuditEventModel.event_type == "export_created",
+            AuditEventModel.user_id == UUID(current_user.user_id),
         )
     )
     audit = result.scalar_one_or_none()
@@ -90,10 +94,10 @@ async def get_export(
 
     payload = audit.payload or {}
     fmt = payload.get("format", "pdf")
-    job_status = payload.get("status", _EXPORT_STATUS.get(export_id, "processing"))
+    job_status = payload.get("status", _EXPORT_STATUS.get(str(export_id), "processing"))
     file_key = payload.get("file_key", "")
     if not file_key and job_status == "completed":
-        file_key = f"exports/{audit.entity_id}/{export_id}.{fmt}"
+        file_key = f"exports/{audit.entity_id}/export.{fmt}"
 
     return ExportResponse(
         id=str(audit.id),
@@ -108,26 +112,27 @@ async def get_export(
 
 @router.get("/{export_id}/download")
 async def download_export(
-    export_id: str,
+    export_id: UUID,
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    import uuid
-
     from adapters.postgresql.models import AuditEventModel
 
     result = await session.execute(
         select(AuditEventModel).where(
-            AuditEventModel.id == uuid.UUID(export_id),
-            AuditEventModel.tenant_id == uuid.UUID(current_user.tenant_id),
+            AuditEventModel.id == export_id,
+            AuditEventModel.event_type == "export_created",
+            AuditEventModel.user_id == UUID(current_user.user_id),
         )
     )
     audit = result.scalar_one_or_none()
     if audit is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
 
-    fmt = (audit.payload or {}).get("format", "pdf")
-    file_key = f"exports/{audit.entity_id}/{export_id}.{fmt}"
+    payload = audit.payload or {}
+    fmt = payload.get("format", "pdf")
+    # Use the key the worker actually stored; fall back to the worker's naming scheme.
+    file_key = payload.get("file_key") or f"exports/{audit.entity_id}/export.{fmt}"
     from adapters.minio.storage import MinioStorageAdapter
 
     storage = MinioStorageAdapter()
@@ -139,6 +144,8 @@ async def download_export(
     media_types = {
         "pdf": "application/pdf",
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "md": "text/markdown",
+        "markdown": "text/markdown",
     }
     return Response(
         content=data,

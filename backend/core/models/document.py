@@ -47,7 +47,6 @@ class ProvenanceLink:
 @dataclass
 class Document:
     doc_id: str = field(default_factory=lambda: f"d_{uuid4().hex[:8]}")
-    tenant_id: str = ""
     workspace_id: str | None = None
     title: str = ""
     doc_type: str = ""

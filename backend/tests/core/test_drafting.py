@@ -3,7 +3,59 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.services.context import ContextChunk, ContextPack, ContextPackService, ContextSource
-from core.services.drafting import DraftService
+from core.services.drafting import (
+    DraftService,
+    assemble_draft_content,
+    build_section_node,
+    build_section_paragraph,
+    spec_sections_with_provenance,
+)
+
+
+class TestDraftAssembly:
+    def test_build_section_paragraph_plain(self):
+        node = build_section_paragraph({"content": "Ciao"})
+        assert node["type"] == "paragraph"
+        assert node["content"][0]["text"] == "Ciao"
+        assert "marks" not in node["content"][0]
+
+    def test_build_section_paragraph_runs_marks(self):
+        node = build_section_paragraph({"runs": [
+            {"text": "A", "provenance": {"source_doc_id": "d1", "chunk_id": "c1"}, "placeholder": None},
+            {"text": "B", "provenance": None, "placeholder": {"slot_id": "s", "reason": "r"}},
+        ]})
+        assert node["content"][0]["marks"][0]["type"] == "provenance"
+        assert node["content"][1]["marks"][0]["type"] == "placeholderMark"
+
+    def test_build_section_node_attrs(self):
+        node = build_section_node({"section_id": "sec_x", "title": "T", "content": "c"}, 0)
+        assert node["type"] == "section"
+        assert node["attrs"]["sectionId"] == "sec_x"
+        assert node["attrs"]["number"] == 1
+
+    def test_build_section_node_status_default(self):
+        node = build_section_node({"section_id": "sec_x", "title": "T", "content": "c"}, 0)
+        assert node["attrs"]["status"] == "draft"
+
+    def test_build_section_node_status_override(self):
+        node = build_section_node({"section_id": "s", "status": "final"}, 0)
+        assert node["attrs"]["status"] == "final"
+
+    def test_assemble_draft_content(self):
+        doc = assemble_draft_content([
+            {"section_id": "s1", "title": "A", "content": "x"},
+            {"section_id": "s2", "title": "B", "content": "y"},
+        ])
+        assert doc["type"] == "doc"
+        assert len(doc["content"]) == 2
+        assert doc["content"][1]["attrs"]["sectionId"] == "s2"
+
+    def test_spec_sections_with_provenance(self):
+        out = spec_sections_with_provenance([
+            {"section_id": "s1", "title": "A", "provenance": [{"chunk_id": "c1"}]},
+        ])
+        assert out[0]["section_id"] == "s1"
+        assert out[0]["provenance"][0]["chunk_id"] == "c1"
 
 
 class TestDraftService:
@@ -156,6 +208,47 @@ class TestDraftService:
         mock_svc.build_section_context.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_generate_section_maps_runs(self):
+        mock_llm = AsyncMock()
+        mock_llm.generate_structured.return_value = {
+            "content": "Le parti sono Acme e Beta.",
+            "provenance": [{"source": "doc_1", "confidence": 0.9}],
+            "runs": [
+                {"text": "Le parti sono Acme e Beta.",
+                 "provenance": {"source": "doc_1", "chunk_id": "chk_1", "confidence": 0.9},
+                 "placeholder": None},
+            ],
+        }
+        self.service._llm = mock_llm
+        spec = {"title": "Test"}
+        section = {"section_id": "sec_1", "title": "Parti"}
+        context = self._make_context([{"chunk_id": "chk_1", "text": "Acme, Beta"}])
+        result = await self.service.generate_section(spec, section, context)
+        assert "runs" in result
+        assert result["runs"][0]["provenance"]["chunk_id"] == "chk_1"
+        assert result["runs"][0]["placeholder"] is None
+
+    @pytest.mark.asyncio
+    async def test_generate_section_unsourced_content_marked_placeholder(self):
+        # No provenance and no runs -> the content must be flagged as a placeholder
+        # span, never silently accepted as sourced.
+        mock_llm = AsyncMock()
+        mock_llm.generate_structured.return_value = {
+            "content": "Clausola inventata senza fonte.",
+            "provenance": [],
+        }
+        self.service._llm = mock_llm
+        spec = {"title": "Test"}
+        section = {"section_id": "sec_1", "title": "Oggetto"}
+        from core.services.context import ContextPack
+        result = await self.service.generate_section(spec, section, ContextPack())
+        assert result["runs"], "expected a synthesized placeholder run"
+        run = result["runs"][0]
+        assert run["placeholder"] is not None
+        assert run["provenance"] is None
+        assert result["placeholders"]
+
+    @pytest.mark.asyncio
     async def test_generate_section_provenance_includes_chunk_id(self):
         mock_llm = AsyncMock()
         mock_llm.generate_structured.return_value = {
@@ -169,6 +262,34 @@ class TestDraftService:
         result = await self.service.generate_section(spec, section, context)
         assert result["provenance"][0]["chunk_id"] == "chk_abc"
         assert result["provenance"][0]["source"] == "doc_1"
+
+    def test_format_context_pack_exposes_ids(self):
+        # The worker prompt must surface source_doc_id + chunk_id so the LLM can
+        # cite them; a title-only context leaves provenance unresolvable.
+        pack = self._make_context([{"chunk_id": "chk_1", "document_id": "d1", "text": "hello"}])
+        out = self.service._format_context_pack(pack)
+        assert "source_doc_id=d1" in out
+        assert "chunk_id=chk_1" in out
+
+    @pytest.mark.asyncio
+    async def test_generate_section_provenance_falls_back_to_pack_source(self):
+        # LLM echoes a free-form "source" that matches no chunk id; provenance
+        # must still carry a real source_doc_id/chunk_id from the pack so the
+        # promote-time NOT NULL FK can be satisfied.
+        mock_llm = AsyncMock()
+        mock_llm.generate_structured.return_value = {
+            "content": "Clausola.",
+            "provenance": [{"source": "nome-libero-non-id", "confidence": 0.8}],
+        }
+        self.service._llm = mock_llm
+        spec = {"title": "T"}
+        section = {"section_id": "sec_1", "title": "Parti"}
+        context = self._make_context(
+            [{"document_id": "doc_real", "chunk_id": "chk_z", "text": "t"}]
+        )
+        result = await self.service.generate_section(spec, section, context)
+        assert result["provenance"][0]["source_doc_id"] == "doc_real"
+        assert result["provenance"][0]["chunk_id"] == "chk_z"
 
     @pytest.mark.asyncio
     async def test_generate_section_context_prompt_includes_italian_prefix(self):

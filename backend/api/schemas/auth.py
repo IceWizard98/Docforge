@@ -4,7 +4,6 @@ from pydantic import BaseModel, EmailStr, Field
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
-    tenant_slug: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -16,8 +15,7 @@ class TokenResponse(BaseModel):
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
-    display_name: str
-    tenant_slug: str
+    display_name: str = Field(min_length=1)
 
 
 class RefreshRequest(BaseModel):
@@ -31,13 +29,6 @@ class UserResponse(BaseModel):
     role: str
 
 
-class TenantResponse(BaseModel):
-    id: str
-    name: str
-    slug: str
-    status: str
-
-
 class LoginResponse(BaseModel):
     token: str
     refresh_token: str = ""
@@ -47,7 +38,6 @@ class LoginResponse(BaseModel):
 
 class RegisterResponse(BaseModel):
     user: UserResponse
-    tenant: TenantResponse
     token: str = ""
 
 

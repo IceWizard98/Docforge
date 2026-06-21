@@ -35,8 +35,8 @@ class PgvectorAdapter:
                 ),
                 {
                     "id": chunk.get("id", ""),
-                    "document_id": chunk.get("document_id", ""),
-                    "source_document_id": chunk.get("source_document_id", ""),
+                    "document_id": chunk.get("document_id") or None,
+                    "source_document_id": chunk.get("source_document_id") or None,
                     "section_id": chunk.get("section_id"),
                     "chunk_index": chunk.get("chunk_index", 0),
                     "text_content": chunk.get("text", ""),
@@ -86,7 +86,6 @@ class PgvectorAdapter:
         self,
         query_embedding: list[float],
         limit: int = 10,
-        tenant_id: str = "",
         filters: RetrievalFilters | None = None,
     ) -> list[dict]:
         embedding_literal = "[" + ",".join(str(v) for v in query_embedding) + "]"
@@ -99,30 +98,16 @@ class PgvectorAdapter:
         }
         base_params.update(filter_params)
 
-        if tenant_id:
-            query = f"""
-                SELECT dc.id as chunk_id, dc.document_id as doc_id, dc.section_id,
-                    dc.chunk_index, dc.text_content as content, dc.metadata,
-                    1 - (dc.embedding <=> :embedding::vector) AS score
-                FROM document_chunks dc
-                LEFT JOIN source_documents sd ON sd.id = dc.source_document_id
-                JOIN documents d ON d.id = dc.document_id AND d.tenant_id = :tenant_id
-                WHERE dc.embedding IS NOT NULL{filter_clause}
-                ORDER BY dc.embedding <=> :embedding2::vector
-                LIMIT :limit
-            """  # noqa: S608
-            base_params["tenant_id"] = tenant_id
-        else:
-            query = f"""
-                SELECT dc.id as chunk_id, dc.document_id as doc_id, dc.section_id,
-                    dc.chunk_index, dc.text_content as content, dc.metadata,
-                    1 - (dc.embedding <=> :embedding::vector) AS score
-                FROM document_chunks dc
-                LEFT JOIN source_documents sd ON sd.id = dc.source_document_id
-                WHERE dc.embedding IS NOT NULL{filter_clause}
-                ORDER BY dc.embedding <=> :embedding2::vector
-                LIMIT :limit
-            """  # noqa: S608
+        query = f"""
+            SELECT dc.id as chunk_id, dc.document_id as doc_id, dc.section_id,
+                dc.chunk_index, dc.text_content as content, dc.metadata,
+                1 - (dc.embedding <=> :embedding::vector) AS score
+            FROM document_chunks dc
+            LEFT JOIN source_documents sd ON sd.id = dc.source_document_id
+            WHERE dc.embedding IS NOT NULL{filter_clause}
+            ORDER BY dc.embedding <=> :embedding2::vector
+            LIMIT :limit
+        """  # noqa: S608
 
         result = await self.session.execute(text(query), base_params)
         rows = result.all()
@@ -132,7 +117,6 @@ class PgvectorAdapter:
         self,
         query_text: str,
         limit: int = 10,
-        tenant_id: str = "",
         filters: RetrievalFilters | None = None,
     ) -> list[dict]:
         filter_clause, filter_params = self._build_filter_clauses(filters)
@@ -143,26 +127,18 @@ class PgvectorAdapter:
         }
         base_params.update(filter_params)
 
-        select_from = """
+        query = f"""
             SELECT dc.id as chunk_id, dc.document_id as doc_id, dc.section_id,
                 dc.chunk_index, dc.text_content as content, dc.metadata,
                 ts_rank(to_tsvector('italian', coalesce(dc.text_content, '')),
                         plainto_tsquery('italian', :query_text)) AS score
             FROM document_chunks dc
             LEFT JOIN source_documents sd ON sd.id = dc.source_document_id
-        """
-
-        if tenant_id:
-            select_from += " JOIN documents d ON d.id = dc.document_id AND d.tenant_id = :tenant_id"
-            base_params["tenant_id"] = tenant_id
-
-        query = f"""
-            {select_from}
             WHERE to_tsvector('italian', coalesce(dc.text_content, ''))
                   @@ plainto_tsquery('italian', :query_text){filter_clause}
             ORDER BY score DESC
             LIMIT :limit
-        """
+        """  # noqa: S608
 
         result = await self.session.execute(text(query), base_params)
         rows = result.all()

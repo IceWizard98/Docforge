@@ -1,0 +1,34 @@
+doc_type: service_sheet
+label: "Scheda servizi"
+aliases: ["scheda servizi", "scheda servizio", "service sheet", "service-sheet"]
+slots:
+  - id: service_name
+    label: "Nome del servizio"
+    description: "Denominazione e categoria del servizio"
+    required: true
+    retrieval_query_hint: "nome servizio, denominazione, categoria"
+  - id: description
+    label: "Descrizione"
+    description: "Descrizione dettagliata del servizio"
+    required: true
+    retrieval_query_hint: "descrizione servizio, cosa include, funzionalità"
+  - id: target
+    label: "Destinatari"
+    description: "Destinatari e casi d'uso"
+    required: false
+    retrieval_query_hint: "destinatari, target, casi d'uso, a chi è rivolto"
+  - id: deliverables
+    label: "Deliverable"
+    description: "Output e risultati attesi"
+    required: true
+    retrieval_query_hint: "deliverable, output, risultati, cosa viene consegnato"
+  - id: pricing
+    label: "Prezzo"
+    description: "Modello di prezzo e condizioni economiche"
+    required: false
+    retrieval_query_hint: "prezzo, listino, tariffa, costo, condizioni economiche"
+  - id: sla
+    label: "Livelli di servizio"
+    description: "SLA, tempistiche e supporto"
+    required: false
+    retrieval_query_hint: "SLA, tempistiche, supporto, disponibilità, garanzie"

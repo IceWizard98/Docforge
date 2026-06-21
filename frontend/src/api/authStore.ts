@@ -55,9 +55,8 @@ export const useAuthStore = defineStore('auth', () => {
     email: string,
     password: string,
     displayName: string,
-    tenantSlug: string,
   ) {
-    const response = await apiRegister(email, password, displayName, tenantSlug)
+    const response = await apiRegister(email, password, displayName)
     setAuth(response)
     return response
   }

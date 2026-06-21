@@ -1,19 +1,21 @@
 import uuid
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EditContext(BaseModel):
-    document_id: str | None = None
+    document_id: UUID | None = None
+    # ProseMirror section id (e.g. "sec_ab12cd34"), not a database UUID.
     section_id: str | None = None
     selected_text: str | None = None
 
 
 class ChatSessionCreate(BaseModel):
-    document_id: str | None = None
-    title: str = "New Chat"
+    document_id: UUID | None = None
+    title: str = Field(default="New Chat", min_length=1, max_length=500)
     context_type: Literal["create_new", "edit_existing", "review"] = "create_new"
 
 
@@ -21,7 +23,6 @@ class ChatSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    tenant_id: uuid.UUID
     document_id: uuid.UUID | None = None
     user_id: uuid.UUID
     title: str
@@ -35,7 +36,6 @@ class SessionListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    tenant_id: uuid.UUID
     document_id: uuid.UUID | None = None
     user_id: uuid.UUID
     title: str
@@ -47,7 +47,7 @@ class SessionListItem(BaseModel):
 
 
 class SessionUpdate(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class ChatSessionListResponse(BaseModel):
@@ -92,6 +92,9 @@ class ChatMessageResponse(BaseModel):
     patches: list[PatchProposal] = []
     sources: list[SourceCitationResponse] = []
     validation: list[dict] = []
+    # Transparency (optional): one-line "what I understood" + per-slot status.
+    intent_summary: str | None = None
+    slot_status: list[dict] = []
     created_at: datetime
 
 
@@ -99,7 +102,6 @@ class ChatSessionDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    tenant_id: uuid.UUID
     document_id: uuid.UUID | None = None
     user_id: uuid.UUID
     title: str

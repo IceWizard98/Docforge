@@ -55,6 +55,18 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/templates',
+    name: 'templates',
+    component: () => import('@/views/TemplatesView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/sources',
+    name: 'sources',
+    component: () => import('@/views/SourceLibraryView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),

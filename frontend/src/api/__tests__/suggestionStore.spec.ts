@@ -5,7 +5,7 @@ import type { Suggestion } from '@/types/document'
 import apiClient from '@/api/client'
 
 function makeSuggestion(id: string, status: Suggestion['status'], type: Suggestion['type'] = 'insert'): Suggestion {
-  return { suggestionId: id, type, status }
+  return { suggestionId: id, patchSetId: `ps_${id}`, type, status }
 }
 
 describe('suggestionStore', () => {

@@ -1,16 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+@variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  --color-primary: #6366F1;
-  --color-primary-light: #818CF8;
-  --color-secondary: #8B5CF6;
-  --color-cta: #10B981;
-  --color-danger: #EF4444;
-  --color-warning: #F59E0B;
-  --color-surface: #F5F3FF;
-  --color-foreground: #1E1B4B;
+  --font-sans: 'Source Sans 3', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Lexend', 'Source Sans 3', system-ui, sans-serif;
+  --color-primary: #1E3A8A;
+  --color-primary-light: #1E40AF;
+  --color-secondary: #475569;
+  --color-cta: #B45309;
+  --color-danger: #DC2626;
+  --color-warning: #D97706;
+  --color-surface: #F8FAFC;
+  --color-foreground: #0F172A;
+  --color-card: #FFFFFF;
+  --color-muted: #64748B;
+  --color-border: #E2E8F0;
 }
 
 body {
@@ -18,9 +24,37 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-surface);
+  color: var(--color-foreground);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
 }
 
 ::selection {
   background-color: var(--color-primary);
   color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:root.dark {
+  --color-primary: #3B82F6;
+  --color-primary-light: #60A5FA;
+  --color-secondary: #94A3B8;
+  --color-cta: #F97316;
+  --color-danger: #EF4444;
+  --color-warning: #FBBF24;
+  --color-surface: #0F172A;
+  --color-foreground: #F1F5F9;
+  --color-card: #1E293B;
+  --color-muted: #94A3B8;
+  --color-border: #334155;
 }

@@ -1,10 +1,9 @@
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from passlib.hash import pbkdf2_sha256
 
-from adapters.postgresql.repositories import TenantRepository
 from api.routes.auth import create_refresh_token
 
 
@@ -60,7 +59,6 @@ class TestLogin:
     async def test_success(self, async_client, mock_session):
         user = MagicMock()
         user.id = "00000000-0000-0000-0000-000000000001"
-        user.tenant_id = "00000000-0000-0000-0000-000000000002"
         user.email = "test@example.com"
         user.display_name = "Test User"
         user.role = "editor"
@@ -124,61 +122,40 @@ class TestRegister:
     async def test_success(self, async_client, mock_session):
         result_none = MagicMock()
         result_none.scalar_one_or_none.return_value = None
-
         mock_session.execute.return_value = result_none
 
-        tenant_mock = MagicMock()
-        tenant_mock.id = uuid.uuid4()
-        tenant_mock.name = "new-tenant"
-        tenant_mock.slug = "new-tenant"
-        tenant_mock.status = "active"
-
-        with patch.object(TenantRepository, "create", return_value=tenant_mock):
-            resp = await async_client.post(
-                "/api/v1/auth/register",
-                json={
-                    "email": "newuser@example.com",
-                    "password": "securepassword123",
-                    "display_name": "New User",
-                    "tenant_slug": "new-tenant",
-                },
-            )
+        resp = await async_client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "newuser@example.com",
+                "password": "securepassword123",
+                "display_name": "New User",
+            },
+        )
 
         assert resp.status_code == 201
         data = resp.json()
         assert "token" in data
         assert data["user"]["email"] == "newuser@example.com"
-        assert data["tenant"]["slug"] == "new-tenant"
+        assert "tenant" not in data
 
     @pytest.mark.asyncio
     async def test_duplicate_email_returns_409(self, async_client, mock_session):
-        result_none = MagicMock()
-        result_none.scalar_one_or_none.return_value = None
-
         existing_user = MagicMock()
         existing_user.id = str(uuid.uuid4())
 
         result_user = MagicMock()
         result_user.scalar_one_or_none.return_value = existing_user
+        mock_session.execute.return_value = result_user
 
-        mock_session.execute.side_effect = [result_none, result_user]
-
-        tenant_mock = MagicMock()
-        tenant_mock.id = uuid.uuid4()
-        tenant_mock.name = "existing-tenant"
-        tenant_mock.slug = "existing-tenant"
-        tenant_mock.status = "active"
-
-        with patch.object(TenantRepository, "create", return_value=tenant_mock):
-            resp = await async_client.post(
-                "/api/v1/auth/register",
-                json={
-                    "email": "existing@example.com",
-                    "password": "securepassword123",
-                    "display_name": "Existing User",
-                    "tenant_slug": "existing-tenant",
-                },
-            )
+        resp = await async_client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "existing@example.com",
+                "password": "securepassword123",
+                "display_name": "Existing User",
+            },
+        )
         assert resp.status_code == 409
 
 
@@ -187,7 +164,6 @@ class TestRefresh:
     async def test_success(self, async_client, mock_session):
         refresh_token = create_refresh_token({
             "sub": "00000000-0000-0000-0000-000000000001",
-            "tenant_id": "00000000-0000-0000-0000-000000000002",
             "role": "editor",
             "email": "test@example.com",
         })
@@ -208,7 +184,6 @@ class TestRefresh:
 
         access_token = create_access_token({
             "sub": "00000000-0000-0000-0000-000000000001",
-            "tenant_id": "00000000-0000-0000-0000-000000000002",
             "role": "editor",
             "email": "test@example.com",
         })

@@ -8,6 +8,10 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
+    # Tasks are fire-and-forget (dispatched via .delay/.apply_async, never .get()).
+    # They return DomainEvent dataclasses which the JSON result serializer cannot
+    # encode; ignoring results avoids EncodeError marking succeeded tasks FAILURE.
+    task_ignore_result=True,
     timezone="Europe/Rome",
     enable_utc=True,
     task_track_started=True,

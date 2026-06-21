@@ -24,15 +24,8 @@ class TestDocument:
         assert doc.outline[1].status == SectionStatus.PENDING
 
 
-class TestTenant:
-    def test_create_tenant(self):
-        from core.models.tenant import Tenant
-        t = Tenant(name="ACME Corp", slug="acme-corp")
-        assert t.id.startswith("t_")
-        assert t.name == "ACME Corp"
-        assert t.status == "active"
-
+class TestUser:
     def test_user_default_role_is_editor(self):
-        from core.models.tenant import User, UserRole
-        u = User(email="test@acme.com", tenant_id="t_123")
+        from core.models.user import User, UserRole
+        u = User(email="test@acme.com")
         assert u.role == UserRole.EDITOR

@@ -155,7 +155,6 @@ class TestChatSession:
 
     def test_with_all_fields(self):
         session = ChatSession(
-            tenant_id="t_1",
             document_id="doc_1",
             user_id="u_1",
             title="Contract Review",
@@ -163,7 +162,6 @@ class TestChatSession:
             status="archived",
             spec={"sections": []},
         )
-        assert session.tenant_id == "t_1"
         assert session.document_id == "doc_1"
         assert session.user_id == "u_1"
         assert session.title == "Contract Review"

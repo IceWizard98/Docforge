@@ -24,6 +24,7 @@ class SearchResult:
     vector_score: float = 0.0
     ft_score: float = 0.0
     rerank_score: float | None = None
+    source_doc_id: str = ""
 
 
 class HybridSearchService:
@@ -77,6 +78,8 @@ class HybridSearchService:
         results: list[SearchResult] = []
         for item in ranked[:top_k]:
             r = item["row"]
+            meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+            src_id = (meta or {}).get("source_document_id")
             results.append(
                 SearchResult(
                     chunk_id=str(r["chunk_id"]),
@@ -86,6 +89,7 @@ class HybridSearchService:
                     score=item["score"],
                     vector_score=item["vector_score"],
                     ft_score=item["ft_score"],
+                    source_doc_id=str(src_id) if src_id else "",
                 )
             )
 

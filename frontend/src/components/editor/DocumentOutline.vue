@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { useDocumentStore } from '@/stores/documentStore'
 import { useEditorStore } from '@/stores/editorStore'
 import { FileText, ChevronRight } from '@lucide/vue'
@@ -8,6 +8,16 @@ import ErrorMessage from '@/components/common/ErrorMessage.vue'
 
 const documentStore = useDocumentStore()
 const editorStore = useEditorStore()
+
+const emit = defineEmits<{
+  (e: 'navigate-section', sectionId: string): void
+  (e: 'toggle-section-status', sectionId: string): void
+  (e: 'rename-section', sectionId: string, newTitle: string): void
+}>()
+
+const editingSectionId = ref<string | null>(null)
+const editingTitle = ref('')
+const editInputRef = ref<HTMLInputElement>()
 
 const statusBadgeClass = (status: string) => {
   switch (status) {
@@ -21,12 +31,34 @@ const statusBadgeClass = (status: string) => {
 }
 
 function goToSection(sectionId: string) {
+  if (editingSectionId.value) return
   editorStore.setActiveSection(sectionId)
+  emit('navigate-section', sectionId)
+}
+
+function startRename(sectionId: string, currentTitle: string) {
+  editingSectionId.value = sectionId
+  editingTitle.value = currentTitle
+  nextTick(() => editInputRef.value?.focus())
+}
+
+function saveRename() {
+  if (!editingSectionId.value) return
+  const trimmed = editingTitle.value.trim()
+  if (trimmed) {
+    emit('rename-section', editingSectionId.value, trimmed)
+  }
+  cancelRename()
+}
+
+function cancelRename() {
+  editingSectionId.value = null
+  editingTitle.value = ''
 }
 </script>
 
 <template>
-  <aside class="flex flex-col h-full bg-surface">
+  <aside class="flex flex-col min-h-0 flex-1 bg-surface">
     <!-- Header -->
     <div class="flex items-center gap-2 px-4 py-3 border-b border-primary/10">
       <FileText class="w-4 h-4 text-primary" />
@@ -74,10 +106,28 @@ function goToSection(sectionId: string) {
           <span class="text-[11px] font-semibold text-primary/50 uppercase min-w-[1.5rem]">
             {{ section.number }}
           </span>
-          <span class="flex-1 truncate">{{ section.title }}</span>
+          <template v-if="editingSectionId === section.id">
+            <input
+              ref="editInputRef"
+              v-model="editingTitle"
+              class="flex-1 min-w-0 bg-transparent border-b border-primary text-foreground text-sm outline-none px-0 py-0"
+              @click.stop
+              @keydown.enter="saveRename"
+              @keydown.escape="cancelRename"
+              @blur="saveRename"
+            />
+          </template>
           <span
-            class="text-[10px] font-medium uppercase px-1 py-0.5 rounded-full border"
+            v-else
+            class="flex-1 truncate"
+            @dblclick.stop="startRename(section.id, section.title)"
+          >
+            {{ section.title }}
+          </span>
+          <span
+            class="text-[10px] font-medium uppercase px-1 py-0.5 rounded-full border cursor-pointer"
             :class="statusBadgeClass(section.status)"
+            @click.stop="emit('toggle-section-status', section.id)"
           >
             {{ section.status }}
           </span>

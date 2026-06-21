@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
 from passlib.hash import pbkdf2_sha256
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import TenantModel, UserModel
-from adapters.postgresql.repositories import TenantRepository, UserRepository
+from adapters.postgresql.models import UserModel
+from adapters.postgresql.repositories import UserRepository
 from adapters.redis.client import RedisClient
 from api.middleware.auth import (
     _decode_token,
@@ -25,13 +26,12 @@ from api.schemas.auth import (
     RegisterRequest,
     RegisterResponse,
     ResetPasswordRequest,
-    TenantResponse,
     TokenResponse,
     UserResponse,
     VerifyEmailRequest,
 )
 from config.settings import get_settings
-from core.models.tenant import Tenant, User, UserRole
+from core.models.user import User, UserRole
 
 logger = logging.getLogger("docforge")
 
@@ -42,6 +42,8 @@ async def _check_rate_limit_redis(
     redis_key: str, max_requests: int = 5, window: int = 60
 ) -> None:
     redis = await RedisClient.get_client()
+    if redis is None:
+        return
     key = f"rate_limit:{redis_key}"
     current = await redis.incr(key)
     if current == 1:
@@ -94,15 +96,9 @@ async def register(
     ip = _client_ip(request)
     await _check_rate_limit_redis(f"register:{ip}")
 
-    tenant_repo = TenantRepository(session)
     user_repo = UserRepository(session)
 
-    tenant_model = await tenant_repo.get_by_slug(body.tenant_slug)
-    if not tenant_model:
-        tenant = Tenant(name=body.tenant_slug, slug=body.tenant_slug)
-        tenant_model = await tenant_repo.create(tenant)
-
-    existing = await user_repo.get_by_email(str(tenant_model.id), body.email)
+    existing = await user_repo.get_by_email(body.email)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -111,7 +107,6 @@ async def register(
 
     password_hash = pbkdf2_sha256.hash(body.password)
     user = User(
-        tenant_id=str(tenant_model.id),
         email=body.email,
         display_name=body.display_name,
         role=UserRole.EDITOR,
@@ -122,19 +117,19 @@ async def register(
 
     verify_token = str(uuid.uuid4())
     redis = await RedisClient.get_client()
-    await redis.setex(
-        f"email_verify:{verify_token}",
-        86400,
-        str(user_model.id),
-    )
+    if redis is not None:
+        await redis.setex(
+            f"email_verify:{verify_token}",
+            86400,
+            str(user_model.id),
+        )
+    # NEVER log the token itself — it is a bearer credential. Deliver via email.
     logger.info("Email verification token generated", extra={
         "user_id": str(user_model.id),
-        "verify_token": verify_token,
     })
 
     token = create_access_token({
         "sub": str(user_model.id),
-        "tenant_id": str(tenant_model.id),
         "role": user_model.role,
         "email": user_model.email,
     })
@@ -146,12 +141,6 @@ async def register(
             email=user_model.email,
             display_name=user_model.display_name or "",
             role=user_model.role,
-        ),
-        tenant=TenantResponse(
-            id=str(tenant_model.id),
-            name=tenant_model.name,
-            slug=tenant_model.slug,
-            status=tenant_model.status,
         ),
     )
 
@@ -166,15 +155,9 @@ async def login(
     await _check_rate_limit_redis(f"login:{ip}")
 
     settings = get_settings()
-    query = select(UserModel).where(UserModel.email == body.email)
-    if body.tenant_slug:
-        tenant_result = await session.execute(
-            select(TenantModel).where(TenantModel.slug == body.tenant_slug)
-        )
-        tenant_model = tenant_result.scalar_one_or_none()
-        if tenant_model:
-            query = query.where(UserModel.tenant_id == tenant_model.id)
-    result = await session.execute(query)
+    result = await session.execute(
+        select(UserModel).where(UserModel.email == body.email)
+    )
     user_model = result.scalar_one_or_none()
 
     if not user_model or not pbkdf2_sha256.verify(body.password, user_model.password_hash):
@@ -184,18 +167,23 @@ async def login(
         )
 
     user_model.last_login_at = datetime.now(UTC)
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A database conflict occurred during login. Please try again.",
+        )
 
     access_token = create_access_token({
         "sub": str(user_model.id),
-        "tenant_id": str(user_model.tenant_id),
         "role": user_model.role,
         "email": user_model.email,
     })
 
     refresh_token = create_refresh_token({
         "sub": str(user_model.id),
-        "tenant_id": str(user_model.tenant_id),
         "role": user_model.role,
         "email": user_model.email,
     })
@@ -232,16 +220,14 @@ async def refresh(
             detail="Invalid token type for refresh",
         )
     user_id = payload.get("sub")
-    tenant_id = payload.get("tenant_id")
     role = payload.get("role")
-    if not user_id or not tenant_id or not role:
+    if not user_id or not role:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
     access_token = create_access_token({
         "sub": user_id,
-        "tenant_id": tenant_id,
         "role": role,
         "email": payload.get("email"),
     })
@@ -268,8 +254,9 @@ async def logout(request: Request):
             user_id = payload.get("sub")
             if user_id:
                 redis = await RedisClient.get_client()
-                await redis.sadd(f"user:{user_id}:tokens", jti)
-                await redis.expire(f"user:{user_id}:tokens", 3600)
+                if redis is not None:
+                    await redis.sadd(f"user:{user_id}:tokens", jti)
+                    await redis.expire(f"user:{user_id}:tokens", 3600)
         except JWTError:
             logger.warning("Logout with invalid token")
     return {"detail": "Logged out successfully"}
@@ -294,16 +281,16 @@ async def forgot_password(
 
     reset_token = str(uuid.uuid4())
     redis = await RedisClient.get_client()
-    await redis.setex(
-        f"password_reset:{reset_token}",
-        3600,
-        str(user_model.id),
-    )
+    if redis is not None:
+        await redis.setex(
+            f"password_reset:{reset_token}",
+            3600,
+            str(user_model.id),
+        )
 
+    # NEVER log the reset token — it is a single-credential account-takeover vector.
     logger.info("Password reset token generated", extra={
         "user_id": str(user_model.id),
-        "email": body.email,
-        "reset_token": reset_token,
     })
 
     return {"detail": "If the email exists, a password reset link has been sent."}
@@ -319,6 +306,11 @@ async def reset_password(
     await _check_rate_limit_redis(f"reset_password:{ip}", max_requests=3, window=3600)
 
     redis = await RedisClient.get_client()
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable. Please try again later.",
+        )
     user_id = await redis.get(f"password_reset:{body.token}")
     if not user_id:
         raise HTTPException(
@@ -337,9 +329,17 @@ async def reset_password(
         )
 
     user_model.password_hash = pbkdf2_sha256.hash(body.password)
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A database conflict occurred while resetting the password. Please try again.",
+        )
 
-    await redis.delete(f"password_reset:{body.token}")
+    if redis is not None:
+        await redis.delete(f"password_reset:{body.token}")
 
     logger.info("Password reset successful", extra={"user_id": user_id})
 
@@ -352,6 +352,11 @@ async def verify_email(
     session: AsyncSession = Depends(get_session),
 ):
     redis = await RedisClient.get_client()
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable. Please try again later.",
+        )
     user_id = await redis.get(f"email_verify:{body.token}")
     if not user_id:
         raise HTTPException(
@@ -370,7 +375,14 @@ async def verify_email(
         )
 
     user_model.email_verified = True
-    await session.flush()
+    try:
+        await session.flush()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A database conflict occurred while verifying the email. Please try again.",
+        )
 
     await redis.delete(f"email_verify:{body.token}")
 

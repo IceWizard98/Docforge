@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", extra="ignore")
 
+    environment: str = "development"
     database_url: str = "postgresql+asyncpg://docforge:docforge@localhost:5432/docforge"
     redis_url: str = "redis://localhost:6379/0"
     storage_provider: str = "minio"
@@ -35,6 +36,18 @@ class Settings(BaseSettings):
     otel_service_name: str = "docforge"
     enable_otel: bool = False
     tesseract_cmd: str = "tesseract"
+    embedding_provider: str = "openai"
+    openai_embedding_model: str = "text-embedding-3-small"
+    ollama_embedding_model: str = "nomic-embed-text"
+    # Single source of truth for the embedding vector size. MUST match the
+    # pgvector column dimension in migration 008 and the chosen provider's
+    # output (text-embedding-3-small=1536, nomic-embed-text=768).
+    embedding_dimension: int = 1536
+
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() in ("production", "prod")
 
 
 @lru_cache

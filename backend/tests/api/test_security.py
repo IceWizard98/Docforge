@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -41,6 +41,19 @@ class TestAuthBypass:
     ):
         resp = await async_client.request(method, path, json=body or {})
         assert resp.status_code == 401
+
+
+class TestRevocationFailClosed:
+    @pytest.mark.asyncio
+    async def test_503_when_revocation_store_unavailable(
+        self, async_client, auth_headers
+    ):
+        # Redis down -> we cannot prove the token is not revoked -> fail closed.
+        with patch(
+            "adapters.redis.client.RedisClient.get_client", return_value=None
+        ):
+            resp = await async_client.get("/api/v1/documents", headers=auth_headers)
+        assert resp.status_code == 503
 
 
 class TestTokenTampering:
@@ -92,70 +105,6 @@ class TestRateLimiting:
                 "email": "new@example.com",
                 "password": "doesnotmatter1234",
                 "display_name": "New User",
-                "tenant_slug": "test-tenant",
             },
         )
         assert resp.status_code == 429
-
-
-class TestTenantIsolationMatrix:
-    @pytest.mark.asyncio
-    async def test_tenant_a_list_does_not_include_tenant_b_docs(
-        self, async_client, mock_session, auth_headers
-    ):
-        mock_session.scalar = AsyncMock(return_value=0)
-
-        resp = await async_client.get("/api/v1/documents", headers=auth_headers)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["meta"]["total"] == 0
-
-    @pytest.mark.asyncio
-    async def test_tenant_b_cannot_get_tenant_a_document(
-        self, async_client, mock_session, auth_headers_tenant_b
-    ):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = result
-
-        resp = await async_client.get(
-            "/api/v1/documents/00000000-0000-0000-0000-000000000000",
-            headers=auth_headers_tenant_b,
-        )
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_tenant_b_cannot_create_session_for_tenant_a_document(
-        self, async_client, mock_session, auth_headers_tenant_b
-    ):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = result
-
-        resp = await async_client.post(
-            "/api/v1/chat/sessions",
-            json={
-                "title": "Test",
-                "document_id": "00000000-0000-0000-0000-000000000000",
-            },
-            headers=auth_headers_tenant_b,
-        )
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_tenant_b_cannot_generate_patch_for_tenant_a_document(
-        self, async_client, mock_session, auth_headers_tenant_b
-    ):
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = result
-
-        resp = await async_client.post(
-            "/api/v1/patches",
-            json={
-                "document_id": "00000000-0000-0000-0000-000000000000",
-                "instructions": "fix this",
-            },
-            headers=auth_headers_tenant_b,
-        )
-        assert resp.status_code == 404

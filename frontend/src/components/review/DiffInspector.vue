@@ -28,7 +28,7 @@ const nonEqualOps = computed(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col min-h-0 flex-1">
     <!-- Header -->
     <div class="flex items-center gap-2 px-4 py-3 border-b border-primary/10">
       <Layers class="w-4 h-4 text-primary" />
