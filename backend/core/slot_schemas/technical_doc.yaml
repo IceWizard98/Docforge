@@ -1,0 +1,34 @@
+doc_type: technical_doc
+label: "Documentazione tecnica"
+aliases: ["documentazione tecnica", "technical documentation", "technical", "manuale", "manual"]
+slots:
+  - id: overview
+    label: "Panoramica"
+    description: "Scopo e ambito del documento tecnico"
+    required: true
+    retrieval_query_hint: "panoramica, scopo, ambito, introduzione, obiettivo"
+  - id: architecture
+    label: "Architettura"
+    description: "Architettura, componenti e struttura"
+    required: true
+    retrieval_query_hint: "architettura, componenti, struttura, diagramma, moduli"
+  - id: requirements
+    label: "Requisiti"
+    description: "Requisiti funzionali e non funzionali"
+    required: false
+    retrieval_query_hint: "requisiti, prerequisiti, dipendenze, vincoli"
+  - id: usage
+    label: "Utilizzo"
+    description: "Istruzioni d'uso, configurazione, esempi"
+    required: true
+    retrieval_query_hint: "utilizzo, configurazione, installazione, esempi, comandi"
+  - id: api
+    label: "Interfacce / API"
+    description: "Interfacce, API, parametri"
+    required: false
+    retrieval_query_hint: "API, interfaccia, endpoint, parametri, contratto"
+  - id: troubleshooting
+    label: "Risoluzione problemi"
+    description: "Errori comuni e risoluzione"
+    required: false
+    retrieval_query_hint: "troubleshooting, errori, problemi comuni, FAQ, diagnostica"

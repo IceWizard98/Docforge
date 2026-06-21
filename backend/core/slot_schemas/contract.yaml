@@ -1,0 +1,44 @@
+doc_type: contract
+label: "Contratto"
+aliases: ["contratto", "agreement", "accordo"]
+slots:
+  - id: parties
+    label: "Parti"
+    description: "Entità che stipulano il contratto"
+    required: true
+    retrieval_query_hint: "parti, denominazione, ragione sociale, sede legale, codice fiscale"
+  - id: object
+    label: "Oggetto"
+    description: "Oggetto e scopo del contratto"
+    required: true
+    retrieval_query_hint: "oggetto del contratto, prestazioni, scopo, ambito"
+  - id: term_duration
+    label: "Durata"
+    description: "Decorrenza, durata, rinnovo e recesso"
+    required: true
+    retrieval_query_hint: "durata, decorrenza, data inizio, scadenza, rinnovo, recesso"
+  - id: payment_terms
+    label: "Corrispettivo e pagamenti"
+    description: "Prezzo, corrispettivo, modalità e termini di pagamento"
+    required: true
+    retrieval_query_hint: "prezzo, corrispettivo, fatturazione, termini di pagamento, IVA"
+  - id: obligations
+    label: "Obblighi delle parti"
+    description: "Obblighi e responsabilità reciproche"
+    required: true
+    retrieval_query_hint: "obblighi, responsabilità, garanzie, adempimenti"
+  - id: confidentiality
+    label: "Riservatezza"
+    description: "Clausole di riservatezza e trattamento dati"
+    required: false
+    retrieval_query_hint: "riservatezza, confidenzialità, dati personali, GDPR"
+  - id: governing_law
+    label: "Legge applicabile e foro"
+    description: "Legge applicabile e foro competente"
+    required: true
+    retrieval_query_hint: "legge applicabile, foro competente, giurisdizione, controversie"
+  - id: termination
+    label: "Risoluzione"
+    description: "Cause di risoluzione e clausola risolutiva espressa"
+    required: false
+    retrieval_query_hint: "risoluzione, inadempimento, clausola risolutiva, penali"

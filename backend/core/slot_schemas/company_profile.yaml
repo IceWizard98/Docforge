@@ -1,0 +1,34 @@
+doc_type: company_profile
+label: "Profilo aziendale"
+aliases: ["profilo aziendale", "company profile", "company-profile"]
+slots:
+  - id: identity
+    label: "Identità aziendale"
+    description: "Denominazione, forma giuridica, sede, dati di contatto"
+    required: true
+    retrieval_query_hint: "denominazione, ragione sociale, sede, partita IVA, contatti"
+  - id: mission
+    label: "Missione e valori"
+    description: "Missione, visione e valori aziendali"
+    required: true
+    retrieval_query_hint: "missione, visione, valori, filosofia aziendale"
+  - id: history
+    label: "Storia"
+    description: "Storia e milestone dell'azienda"
+    required: false
+    retrieval_query_hint: "storia, fondazione, anno, milestone, evoluzione"
+  - id: services
+    label: "Prodotti e servizi"
+    description: "Offerta di prodotti e servizi"
+    required: true
+    retrieval_query_hint: "prodotti, servizi, offerta, soluzioni, settori"
+  - id: team
+    label: "Team e organizzazione"
+    description: "Struttura organizzativa e persone chiave"
+    required: false
+    retrieval_query_hint: "team, organizzazione, management, dipendenti, competenze"
+  - id: clients
+    label: "Clienti e referenze"
+    description: "Clienti principali, case study, referenze"
+    required: false
+    retrieval_query_hint: "clienti, referenze, case study, progetti, partner"

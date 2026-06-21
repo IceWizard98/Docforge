@@ -1,0 +1,39 @@
+doc_type: nda
+label: "Accordo di riservatezza (NDA)"
+aliases: ["nda", "non-disclosure", "accordo di riservatezza", "riservatezza", "confidentiality"]
+slots:
+  - id: parties
+    label: "Parti"
+    description: "Parte divulgante e parte ricevente"
+    required: true
+    retrieval_query_hint: "parti, divulgante, ricevente, denominazione, sede legale"
+  - id: confidential_info
+    label: "Informazioni riservate"
+    description: "Definizione di informazione riservata e ambito"
+    required: true
+    retrieval_query_hint: "informazioni riservate, definizione, ambito, dati protetti"
+  - id: purpose
+    label: "Scopo"
+    description: "Scopo per cui le informazioni sono condivise"
+    required: true
+    retrieval_query_hint: "scopo, finalità, uso consentito delle informazioni"
+  - id: obligations
+    label: "Obblighi di riservatezza"
+    description: "Obblighi della parte ricevente"
+    required: true
+    retrieval_query_hint: "obblighi di riservatezza, divieto di divulgazione, custodia"
+  - id: exclusions
+    label: "Esclusioni"
+    description: "Informazioni escluse dalla riservatezza"
+    required: false
+    retrieval_query_hint: "esclusioni, informazioni di pubblico dominio, eccezioni"
+  - id: duration
+    label: "Durata"
+    description: "Durata dell'obbligo di riservatezza"
+    required: true
+    retrieval_query_hint: "durata, periodo di riservatezza, scadenza obblighi"
+  - id: governing_law
+    label: "Legge applicabile e foro"
+    description: "Legge applicabile e foro competente"
+    required: true
+    retrieval_query_hint: "legge applicabile, foro competente, giurisdizione"
