@@ -912,7 +912,12 @@ async def send_message(
         "=== REGOLE FONDAMENTALI ===",
         "1. Se l'utente chiede di scrivere/creare/generare un documento, produci SUBITO il documento.",
         "2. Usa action type 'draft' per generare. Includi title, doc_type, e sections con contenuti COMPLETI.",
-        "3. Scrivi contenuti PROFESSIONALI e DETTAGLIATI per ogni sezione. MAI placeholder.",
+        "3. Scrivi contenuti PROFESSIONALI e DETTAGLIATI, MA ogni affermazione deve"
+        " essere riconducibile alle fonti caricate. NON inventare fatti, clausole,"
+        " nomi, importi o date non presenti nelle fonti: se un'informazione manca,"
+        " inserisci un segnaposto esplicito tra parentesi quadre (es. \"[DA"
+        " DEFINIRE: foro competente]\") invece di inventarla. Per i contratti una"
+        " clausola allucinata è un danno.",
         "4. Fai domande solo se mancano informazioni critiche (es. tipo documento, parti).",
         "5. Per MODIFICARE il documento aperto usa SOLO i sectionId esatti elencati in"
         " '=== Struttura documento ==='. Le modifiche a contenuto esistente sono"

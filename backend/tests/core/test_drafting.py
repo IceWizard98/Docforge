@@ -156,6 +156,47 @@ class TestDraftService:
         mock_svc.build_section_context.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_generate_section_maps_runs(self):
+        mock_llm = AsyncMock()
+        mock_llm.generate_structured.return_value = {
+            "content": "Le parti sono Acme e Beta.",
+            "provenance": [{"source": "doc_1", "confidence": 0.9}],
+            "runs": [
+                {"text": "Le parti sono Acme e Beta.",
+                 "provenance": {"source": "doc_1", "chunk_id": "chk_1", "confidence": 0.9},
+                 "placeholder": None},
+            ],
+        }
+        self.service._llm = mock_llm
+        spec = {"title": "Test"}
+        section = {"section_id": "sec_1", "title": "Parti"}
+        context = self._make_context([{"chunk_id": "chk_1", "text": "Acme, Beta"}])
+        result = await self.service.generate_section(spec, section, context)
+        assert "runs" in result
+        assert result["runs"][0]["provenance"]["chunk_id"] == "chk_1"
+        assert result["runs"][0]["placeholder"] is None
+
+    @pytest.mark.asyncio
+    async def test_generate_section_unsourced_content_marked_placeholder(self):
+        # No provenance and no runs -> the content must be flagged as a placeholder
+        # span, never silently accepted as sourced.
+        mock_llm = AsyncMock()
+        mock_llm.generate_structured.return_value = {
+            "content": "Clausola inventata senza fonte.",
+            "provenance": [],
+        }
+        self.service._llm = mock_llm
+        spec = {"title": "Test"}
+        section = {"section_id": "sec_1", "title": "Oggetto"}
+        from core.services.context import ContextPack
+        result = await self.service.generate_section(spec, section, ContextPack())
+        assert result["runs"], "expected a synthesized placeholder run"
+        run = result["runs"][0]
+        assert run["placeholder"] is not None
+        assert run["provenance"] is None
+        assert result["placeholders"]
+
+    @pytest.mark.asyncio
     async def test_generate_section_provenance_includes_chunk_id(self):
         mock_llm = AsyncMock()
         mock_llm.generate_structured.return_value = {

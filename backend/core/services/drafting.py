@@ -45,10 +45,21 @@ Section ID: {section_id}
 Ecco il contesto dai documenti sorgente:
 {context_pack}
 
-Write the full content for this section in a professional, clear style.
+REGOLA ANTI-ALLUCINAZIONE (vincolante): ogni affermazione deve essere
+riconducibile al contesto sorgente. NON inventare fatti, clausole, nomi, importi
+o date non presenti nel contesto. Se un'informazione non è nelle fonti, NON
+scriverla come se fosse certa: marcala esplicitamente come segnaposto.
+
+Write the section in a professional, clear style, split into runs.
 Return a JSON object with:
-- "content": the full section text
-- "provenance": array of {{"source": "...", "confidence": <float>}} if context was used
+- "content": the full section text (concatenation of the runs' text)
+- "provenance": array of {{"source": "...", "confidence": <float>}} for sourced parts
+- "runs": array of spans, each {{"text": "...",
+    "provenance": {{"source":"...","chunk_id":"...","confidence":<float>}} | null,
+    "placeholder": {{"slot_id":"...","reason":"..."}} | null }}
+  A run is EITHER sourced (provenance set, placeholder null) OR a placeholder
+  (placeholder set, provenance null) for information not found in the sources.
+- "placeholders": array of {{"slot_id":"...","reason":"..."}} for missing info
 
 Respond with valid JSON only."""
 
@@ -137,12 +148,15 @@ class DraftService:
                 content = result.get("content", "")
                 provenance_raw = result.get("provenance", [])
                 provenance = self._build_provenance(provenance_raw, context_pack)
+                runs = self._build_runs(result, content, provenance)
                 return {
                     "section_id": section_id,
                     "title": section.get("title", ""),
                     "content": content,
                     "status": "draft",
                     "provenance": provenance,
+                    "runs": runs,
+                    "placeholders": [r["placeholder"] for r in runs if r["placeholder"]],
                 }
             except Exception:
                 logger.exception(
@@ -156,6 +170,8 @@ class DraftService:
             "content": "",
             "status": "draft",
             "provenance": self._build_provenance([], context_pack),
+            "runs": [],
+            "placeholders": [],
         }
 
     async def compose_context_pack(
@@ -191,6 +207,49 @@ class DraftService:
         except AttributeError:
             pass
         return "\n".join(parts)
+
+    def _build_runs(self, result: dict, content: str, provenance: list[dict]) -> list[dict]:
+        """Normalize per-span runs, synthesizing a safe default when absent.
+
+        Each run is either sourced (provenance set) or a placeholder. When the LLM
+        returns no runs, unsourced content is conservatively flagged as a
+        placeholder rather than passed off as sourced (anti-hallucination).
+        """
+        raw_runs = result.get("runs")
+        if isinstance(raw_runs, list) and raw_runs:
+            runs: list[dict] = []
+            for r in raw_runs:
+                if not isinstance(r, dict):
+                    continue
+                prov = r.get("provenance") if isinstance(r.get("provenance"), dict) else None
+                ph = r.get("placeholder") if isinstance(r.get("placeholder"), dict) else None
+                runs.append({
+                    "text": str(r.get("text", "")),
+                    "provenance": prov,
+                    "placeholder": ph,
+                })
+            if runs:
+                return runs
+
+        if not content:
+            return []
+        if provenance:
+            first = provenance[0]
+            return [{
+                "text": content,
+                "provenance": {
+                    "source": first.get("source", ""),
+                    "chunk_id": first.get("chunk_id", ""),
+                    "confidence": first.get("confidence", 0.0),
+                },
+                "placeholder": None,
+            }]
+        # Unsourced content -> placeholder, never silently "sourced".
+        return [{
+            "text": content,
+            "provenance": None,
+            "placeholder": {"slot_id": "", "reason": "Contenuto non riconducibile a una fonte"},
+        }]
 
     def _build_provenance(self, raw: list[dict], pack) -> list[dict]:
         if raw:
