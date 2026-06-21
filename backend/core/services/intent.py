@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
-from core.services.slot_schema import SlotSchemaService
+from core.services.slot_schema import SlotSchemaService, get_slot_schema_service
 from ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class IntentInferenceService:
         slot_service: SlotSchemaService | None = None,
     ):
         self._llm = llm
-        self._slots = slot_service or SlotSchemaService()
+        self._slots = slot_service or get_slot_schema_service()
 
     def detect_doc_type(self, text: str) -> str | None:
         """Cheap deterministic alias match over free-form text (no LLM)."""
@@ -84,16 +84,8 @@ class IntentInferenceService:
         return self.detect_doc_type(text)
 
     def _alias_pairs(self) -> list[tuple[str, str]]:
-        pairs: list[tuple[str, str]] = []
-        for dt in self._slots.list_doc_types():
-            schema = self._slots.get(dt)
-            if not schema:
-                continue
-            pairs.append((dt.lower(), dt))
-            pairs.extend((a.lower(), dt) for a in schema.aliases)
-        # Longer aliases first so "non-disclosure" wins over a bare substring.
-        pairs.sort(key=lambda p: len(p[0]), reverse=True)
-        return pairs
+        # Single shared alias table (same source as doc_types.normalize).
+        return self._slots.alias_pairs()
 
     def _all_slots_missing(self, doc_type: str) -> list[SlotState]:
         schema = self._slots.get(doc_type)

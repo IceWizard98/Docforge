@@ -69,3 +69,15 @@ class TestNormalizeError:
     def test_non_string_falls_back_to_other(self):
         assert normalize(123) == "other"  # type: ignore[arg-type]
         assert normalize(["contract"]) == "other"  # type: ignore[arg-type]
+
+
+class TestSingleAliasSource:
+    """normalize and SlotSchemaService.match_alias share one alias table."""
+
+    def test_resolvers_agree_on_every_alias(self):
+        from core.services.slot_schema import get_slot_schema_service
+
+        svc = get_slot_schema_service()
+        for alias, doc_type in svc.alias_pairs():
+            assert normalize(alias) == doc_type, alias
+            assert svc.match_alias(alias) == doc_type, alias

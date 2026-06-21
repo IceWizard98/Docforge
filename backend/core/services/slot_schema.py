@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -119,3 +120,17 @@ class SlotSchemaService:
         if not isinstance(text, str):
             return None
         return self._alias_index.get(text.strip().lower())
+
+    def alias_pairs(self) -> list[tuple[str, str]]:
+        """(alias, doc_type) pairs, longest alias first (for substring matching).
+
+        Single source of truth for type synonyms — consumed by both intent
+        inference and doc_type normalization so they can never drift.
+        """
+        return sorted(self._alias_index.items(), key=lambda p: len(p[0]), reverse=True)
+
+
+@lru_cache(maxsize=1)
+def get_slot_schema_service() -> SlotSchemaService:
+    """Process-wide singleton: slot schemas are static data, parse them once."""
+    return SlotSchemaService()

@@ -39,7 +39,7 @@ from core.services.context import ContextChunk, ContextPackService
 from core.services.intent import IntentInferenceService
 from core.services.search import RetrievalFilters
 from core.services.slot_retrieval import SlotContextPack, SlotRetrievalService
-from core.services.slot_schema import SlotSchemaService
+from core.services.slot_schema import get_slot_schema_service
 from workers.classification import classify_document_task
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 # Loaded once: slot schemas are static data files.
-_SLOT_SERVICE = SlotSchemaService()
+_SLOT_SERVICE = get_slot_schema_service()
 
 # Actions that indicate the user is drafting/editing a document (vs just chatting).
 _DRAFTING_ACTIONS = {

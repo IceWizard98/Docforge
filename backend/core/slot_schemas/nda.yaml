@@ -1,6 +1,6 @@
 doc_type: nda
 label: "Accordo di riservatezza (NDA)"
-aliases: ["nda", "non-disclosure", "accordo di riservatezza", "riservatezza", "confidentiality"]
+aliases: ["nda", "non-disclosure", "non disclosure", "accordo di riservatezza", "riservatezza", "confidentiality"]
 slots:
   - id: parties
     label: "Parti"

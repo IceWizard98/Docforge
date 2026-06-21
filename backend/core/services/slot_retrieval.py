@@ -15,7 +15,7 @@ from typing import Literal
 
 from core.services.context import ContextChunk, ContextPackService
 from core.services.scoring import Bucket, bucket
-from core.services.slot_schema import SlotSchemaService
+from core.services.slot_schema import SlotSchemaService, get_slot_schema_service
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class SlotRetrievalService:
             self._ctx = context_service
         else:
             self._ctx = ContextPackService(pgvector=pgvector, llm_provider=llm_provider)
-        self._slots = slot_service or SlotSchemaService()
+        self._slots = slot_service or get_slot_schema_service()
 
     async def build_slot_context(
         self, doc_type: str, top_k: int = 3
