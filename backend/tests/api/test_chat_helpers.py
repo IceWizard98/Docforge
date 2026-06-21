@@ -10,6 +10,7 @@ from api.routes.chat import (
     _corpus_catalog,
     _document_outline,
     _format_transparency,
+    _section_paragraph,
     _section_title,
     _write_citations,
 )
@@ -210,3 +211,42 @@ class TestFormatTransparency:
             "Contratto", SlotContextPack(doc_type="contract", slots=[]), []
         )
         assert slot_status == []
+
+
+# --- Task: section paragraph with per-span marks -----------------------------
+
+class TestSectionParagraph:
+    def test_plain_content_no_marks(self):
+        node = _section_paragraph({"content": "Testo semplice"})
+        assert node["type"] == "paragraph"
+        assert node["content"][0]["text"] == "Testo semplice"
+        assert "marks" not in node["content"][0]
+
+    def test_empty_content_yields_empty_paragraph(self):
+        node = _section_paragraph({"content": ""})
+        assert node["content"] == []
+
+    def test_runs_apply_provenance_mark(self):
+        sec = {"content": "x", "runs": [
+            {"text": "Le parti.", "provenance": {"source_doc_id": "d1", "chunk_id": "c1", "confidence": 0.9}, "placeholder": None},
+        ]}
+        node = _section_paragraph(sec)
+        text = node["content"][0]
+        assert text["text"] == "Le parti."
+        assert text["marks"][0]["type"] == "provenance"
+        assert text["marks"][0]["attrs"]["sourceDocId"] == "d1"
+        assert text["marks"][0]["attrs"]["chunkId"] == "c1"
+
+    def test_runs_apply_placeholder_mark(self):
+        sec = {"runs": [
+            {"text": "[foro]", "provenance": None, "placeholder": {"slot_id": "law", "reason": "manca"}},
+        ]}
+        node = _section_paragraph(sec)
+        text = node["content"][0]
+        assert text["marks"][0]["type"] == "placeholderMark"
+        assert text["marks"][0]["attrs"]["slotId"] == "law"
+
+    def test_runs_skip_empty_text(self):
+        sec = {"runs": [{"text": "", "provenance": None, "placeholder": None}]}
+        node = _section_paragraph(sec)
+        assert node["content"] == []

@@ -1,9 +1,60 @@
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from api.routes.chat import _handle_document_action, _resolve_assistant_action
+from api.routes.chat import (
+    _execute_draft_action,
+    _handle_document_action,
+    _resolve_assistant_action,
+)
+
+
+class TestExecuteDraftActionProvenance:
+    @pytest.mark.asyncio
+    async def test_spec_keeps_provenance_and_content_carries_marks(self):
+        action = {"type": "draft", "params": {
+            "title": "Contratto X",
+            "doc_type": "contract",
+            "sections": [{
+                "title": "Parti",
+                "content": "Le parti sono Acme e Beta.",
+                "provenance": [{"source_doc_id": "d1", "chunk_id": "c1", "confidence": 0.9}],
+                "runs": [
+                    {"text": "Le parti sono Acme e Beta.",
+                     "provenance": {"source_doc_id": "d1", "chunk_id": "c1", "confidence": 0.9},
+                     "placeholder": None},
+                ],
+            }],
+        }}
+        session = MagicMock()
+        session.add = MagicMock()
+        session.flush = AsyncMock()
+
+        draft_id, doc_content, actions = await _execute_draft_action(
+            action, uuid.uuid4(), None, SimpleNamespace(user_id=str(uuid.uuid4())), session
+        )
+
+        assert draft_id is not None
+        # content paragraph carries the provenance mark per span
+        para = doc_content["content"][0]["content"][0]
+        text_node = para["content"][0]
+        assert text_node["marks"][0]["type"] == "provenance"
+        assert text_node["marks"][0]["attrs"]["sourceDocId"] == "d1"
+
+        # the persisted DraftModel.spec keeps per-section provenance for promote-time links
+        draft_model = session.add.call_args[0][0]
+        assert draft_model.spec["sections"][0]["provenance"][0]["chunk_id"] == "c1"
+
+    @pytest.mark.asyncio
+    async def test_no_sections_returns_noop(self):
+        session = MagicMock()
+        out = await _execute_draft_action(
+            {"type": "draft", "params": {"sections": []}},
+            uuid.uuid4(), None, SimpleNamespace(user_id=str(uuid.uuid4())), session,
+        )
+        assert out == (None, None, [])
 
 # --- _resolve_assistant_action (pure) ---
 

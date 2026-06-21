@@ -59,6 +59,48 @@ def _is_drafting_turn(action_data: dict | None) -> bool:
     return bool(action_data) and action_data.get("type") in _DRAFTING_ACTIONS
 
 
+def _runs_to_inline(runs: list) -> list[dict]:
+    """Convert generated per-span runs into ProseMirror inline text nodes.
+
+    Sourced runs carry the 'provenance' mark; unsourced runs the 'placeholderMark'
+    mark — so a hallucinated span can never look grounded. Mirrors the frontend
+    runsToContent so backend-built and frontend-built content stay consistent.
+    """
+    nodes: list[dict] = []
+    for r in runs or []:
+        if not isinstance(r, dict):
+            continue
+        text = r.get("text", "")
+        if not text:
+            continue
+        node: dict = {"type": "text", "text": text}
+        prov = r.get("provenance") if isinstance(r.get("provenance"), dict) else None
+        ph = r.get("placeholder") if isinstance(r.get("placeholder"), dict) else None
+        if prov:
+            node["marks"] = [{"type": "provenance", "attrs": {
+                "sourceDocId": prov.get("source_doc_id") or prov.get("source", ""),
+                "chunkId": prov.get("chunk_id"),
+                "confidence": prov.get("confidence", 0),
+            }}]
+        elif ph:
+            node["marks"] = [{"type": "placeholderMark", "attrs": {
+                "slotId": ph.get("slot_id"),
+                "reason": ph.get("reason"),
+            }}]
+        nodes.append(node)
+    return nodes
+
+
+def _section_paragraph(sec: dict) -> dict:
+    """Build a section's paragraph node, applying per-span marks when runs exist."""
+    runs = sec.get("runs")
+    if isinstance(runs, list) and runs:
+        return {"type": "paragraph", "content": _runs_to_inline(runs)}
+    content = sec.get("content", "")
+    inline = [{"type": "text", "text": content}] if content else []
+    return {"type": "paragraph", "content": inline}
+
+
 def _format_transparency(
     label: str, slot_pack: SlotContextPack, source_titles: list[str]
 ) -> tuple[str, list[dict]]:
@@ -796,14 +838,7 @@ async def _execute_draft_action(
                         "title": sec.get("title", f"Sezione {i+1}"),
                         "number": i + 1,
                     },
-                    "content": [
-                        {
-                            "type": "paragraph",
-                            "content": [
-                                {"type": "text", "text": sec.get("content", "")}
-                            ],
-                        }
-                    ],
+                    "content": [_section_paragraph(sec)],
                 }
                 for i, sec in enumerate(sections)
             ],
@@ -935,7 +970,15 @@ async def send_message(
         history,
         "",
         "=== AZIONI DISPONIBILI ===",
-        '- "draft": Genera bozza completa. params: {"title":"...","doc_type":"...","language":"it","sections":[{"title":"...","content":"..."}]}',
+        '- "draft": Genera bozza completa. params: {"title":"...","doc_type":"...",'
+        '"language":"it","sections":[{"title":"...","content":"...",'
+        '"provenance":[{"source_doc_id":"<id da search_corpus>","chunk_id":"...",'
+        '"confidence":0.0}],'
+        '"runs":[{"text":"...","provenance":{"source_doc_id":"...","chunk_id":"...",'
+        '"confidence":0.0}|null,"placeholder":{"slot_id":"...","reason":"..."}|null}]}]}.'
+        ' Per ogni sezione: usa "runs" per marcare ogni frammento come sorgentato'
+        ' (provenance) o segnaposto (placeholder), e "provenance" per le fonti'
+        ' della sezione. Marca segnaposto ciò che non è nelle fonti.',
         '- "create_section": Aggiungi sezione al documento. params: {"title":"...","content":"..."}',
         '- "insert_clause": Inserisci clausola. params: {"section_id":"...","clause_text":"..."}',
         '- "rewrite_section": Riscrivi una sezione (diff da rivedere). params: {"section_id":"...","content":"..."}',
