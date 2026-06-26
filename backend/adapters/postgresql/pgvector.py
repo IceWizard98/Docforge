@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from sqlalchemy import text
@@ -26,9 +27,9 @@ class PgvectorAdapter:
                         section_id, chunk_index, text_content, token_count, metadata, embedding)
                     VALUES (:id, :document_id, :source_document_id,
                         :section_id, :chunk_index, :text_content,
-                        :token_count, :metadata, :embedding::vector)
+                        :token_count, CAST(:metadata AS json), CAST(:embedding AS vector))
                     ON CONFLICT (id) DO UPDATE SET
-                        embedding = :embedding2::vector,
+                        embedding = CAST(:embedding2 AS vector),
                         text_content = :text_content,
                         token_count = :token_count
                     """
@@ -41,7 +42,7 @@ class PgvectorAdapter:
                     "chunk_index": chunk.get("chunk_index", 0),
                     "text_content": chunk.get("text", ""),
                     "token_count": chunk.get("token_count", 0),
-                    "metadata": chunk.get("metadata", {}),
+                    "metadata": json.dumps(chunk.get("metadata") or {}),
                     "embedding": embedding_literal,
                     "embedding2": embedding_literal,
                 },
@@ -101,11 +102,11 @@ class PgvectorAdapter:
         query = f"""
             SELECT dc.id as chunk_id, dc.document_id as doc_id, dc.section_id,
                 dc.chunk_index, dc.text_content as content, dc.metadata,
-                1 - (dc.embedding <=> :embedding::vector) AS score
+                1 - (dc.embedding <=> CAST(:embedding AS vector)) AS score
             FROM document_chunks dc
             LEFT JOIN source_documents sd ON sd.id = dc.source_document_id
             WHERE dc.embedding IS NOT NULL{filter_clause}
-            ORDER BY dc.embedding <=> :embedding2::vector
+            ORDER BY dc.embedding <=> CAST(:embedding2 AS vector)
             LIMIT :limit
         """  # noqa: S608
 
