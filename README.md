@@ -165,9 +165,7 @@ docforge/
 │   └── scripts/        # Infrastructure scripts
 ├── scripts/            # Development scripts
 ├── .github/workflows/  # CI/CD pipelines
-├── docker-compose.yml      # Base stack: infra + api + worker + frontend
-├── docker-compose.dev.yml  # Dev overrides (hot reload, bind mounts) — via just docker-up
-├── docker-compose.prod.yml # Production topology (Traefik TLS, replicas, migrate job)
+├── docker-compose.yml  # Local stack: infra + api + worker + frontend (hot reload)
 ├── justfile            # Command runner
 └── README.md
 ```
@@ -210,28 +208,15 @@ cd backend && pytest tests/ -v --cov=core
 # Build all images
 just docker-build
 
-# Start full stack
+# Start the full local stack (hot reload)
 just docker-up
 
-# Production stack
-docker compose -f docker-compose.prod.yml up -d
+# Stop it
+just docker-down
 ```
 
-## Deployment
-
-### Docker Compose (production)
-
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
-
-### Kubernetes
-
-```bash
-kubectl apply -f infra/k8s/
-```
-
-Make sure to configure secrets and ingress for your domain.
+> Production topology (TLS edge, replicas, one-shot migrations) is not committed
+> yet — it will be added in a dedicated compose file when we deploy.
 
 ## License
 

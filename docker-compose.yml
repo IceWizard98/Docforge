@@ -1,10 +1,7 @@
-# DocForge — base stack: infra (postgres/redis/minio) + api + worker + frontend.
-# This file is portable and runnable on its own (built images, default CMD).
-#
-#   just docker-up               -> base + docker-compose.dev.yml (hot-reload +
-#                                   source bind mounts)
-#   docker compose up            -> base alone (clean, production-shaped)
-#   docker compose -f docker-compose.prod.yml up -d  -> production topology
+# DocForge — local development stack.
+# `docker compose up` brings up the whole environment: infra
+# (postgres/redis/minio) + api + worker + frontend, with hot reload.
+# (Production topology will be added later in a separate file.)
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -66,8 +63,11 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
-    # Default CMD (multi-worker uvicorn) from the image. The dev override swaps
-    # in --reload + a source bind mount; this base stays production-shaped.
+    # Entrypoint runs alembic migrations, then this command. --reload for dev;
+    # the bind mount below gives hot reload from the host source tree.
+    command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,12 +75,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
     networks:
       - docforge-net
 
@@ -90,6 +84,8 @@ services:
       dockerfile: ../infra/docker/Dockerfile.worker
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,12 +93,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
     networks:
       - docforge-net
 
