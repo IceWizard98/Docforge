@@ -1,3 +1,5 @@
+# DocForge — production override. Traefik TLS edge, replicas, no bind mounts.
+# Usage: docker compose -f docker-compose.prod.yml up -d
 services:
   traefik:
     image: traefik:v3.1
@@ -69,6 +71,11 @@ services:
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
+    # The MinIO root creds and the app's MinIO creds (api/worker via env_file:
+    # .env) MUST be the same values. Compose interpolates ${MINIO_ACCESS_KEY}/
+    # ${MINIO_SECRET_KEY} from the project .env, the SAME file the app reads, so
+    # they stay in sync — set them ONLY in .env, never export them in the shell
+    # (a shell export would override here but not in the container -> 403s).
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-docforge}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-docforge123}
@@ -83,14 +90,38 @@ services:
       - docforge-net
     restart: unless-stopped
 
+  # One-shot migration runner. Owns `alembic upgrade head` so the api replicas
+  # never race the same migration on cold start. Runs to completion, then exits.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/Dockerfile.api
+    env_file: .env
+    # RUN_MIGRATIONS=0 so the entrypoint's auto-migrate is skipped; the explicit
+    # command below is the single authoritative migration run.
+    environment:
+      RUN_MIGRATIONS: "0"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - docforge-net
+    restart: "no"
+
   api:
     build:
-      context: ../backend
+      context: ./backend
       dockerfile: ../infra/docker/Dockerfile.api
     expose:
       - "8000"
-    env_file: ../.env
+    env_file: .env
+    # Migrations are owned by the `migrate` service; replicas must not run them.
+    environment:
+      RUN_MIGRATIONS: "0"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -118,10 +149,14 @@ services:
 
   worker:
     build:
-      context: ../backend
+      context: ./backend
       dockerfile: ../infra/docker/Dockerfile.worker
-    env_file: ../.env
+    env_file: .env
+    environment:
+      RUN_MIGRATIONS: "0"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -139,8 +174,8 @@ services:
 
   frontend:
     build:
-      context: ../frontend
-      dockerfile: ../infra/docker/Dockerfile.frontend
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
     expose:
       - "80"
     depends_on:

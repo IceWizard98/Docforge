@@ -64,21 +64,22 @@ db-new-migration msg:
 db-init:
     ./infra/scripts/init-db.sh
 
-# Docker
+# Docker — root docker-compose.yml is the full stack (infra + api + worker + frontend).
+# Dev targets layer docker-compose.dev.yml (hot reload + source bind mounts).
 docker-build:
-    docker compose -f infra/docker/docker-compose.yml build
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
 docker-up:
-    docker compose -f infra/docker/docker-compose.yml up -d
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 docker-down:
-    docker compose -f infra/docker/docker-compose.yml down
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
 docker-prod-up:
-    docker compose -f infra/docker/docker-compose.prod.yml up -d
+    docker compose -f docker-compose.prod.yml up -d
 
 docker-prod-down:
-    docker compose -f infra/docker/docker-compose.prod.yml down
+    docker compose -f docker-compose.prod.yml down
 
 # Clean
 clean:

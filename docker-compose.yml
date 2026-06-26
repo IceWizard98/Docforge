@@ -1,6 +1,14 @@
+# DocForge — base stack: infra (postgres/redis/minio) + api + worker + frontend.
+# This file is portable and runnable on its own (built images, default CMD).
+#
+#   just docker-up               -> base + docker-compose.dev.yml (hot-reload +
+#                                   source bind mounts)
+#   docker compose up            -> base alone (clean, production-shaped)
+#   docker compose -f docker-compose.prod.yml up -d  -> production topology
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: docforge
       POSTGRES_PASSWORD: docforge
@@ -8,15 +16,18 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - docforge_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U docforge"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - docforge-net
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -24,9 +35,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - docforge-net
 
   minio:
     image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -35,13 +49,80 @@ services:
       MINIO_ROOT_USER: docforge
       MINIO_ROOT_PASSWORD: docforge123
     volumes:
-      - miniodata:/data
+      - docforge_minio_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - docforge-net
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    # Default CMD (multi-worker uvicorn) from the image. The dev override swaps
+    # in --reload + a source bind mount; this base stays production-shaped.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    networks:
+      - docforge-net
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/Dockerfile.worker
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    networks:
+      - docforge-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.frontend
+    restart: unless-stopped
+    # Port 5173 maps to nginx port 80 internally
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    networks:
+      - docforge-net
 
 volumes:
-  pgdata:
-  miniodata:
+  docforge_postgres_data:
+  docforge_minio_data:
+
+networks:
+  docforge-net:
+    driver: bridge

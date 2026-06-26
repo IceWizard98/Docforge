@@ -160,12 +160,14 @@ docforge/
 │   │   └── views/      # Page views
 │   └── tests/          # Test suite
 ├── infra/
-│   ├── docker/         # Dockerfiles and compose files
+│   ├── docker/         # Dockerfiles + nginx.conf
 │   ├── k8s/            # Kubernetes manifests
 │   └── scripts/        # Infrastructure scripts
 ├── scripts/            # Development scripts
 ├── .github/workflows/  # CI/CD pipelines
-├── docker-compose.yml  # Root compose (infra services)
+├── docker-compose.yml      # Base stack: infra + api + worker + frontend
+├── docker-compose.dev.yml  # Dev overrides (hot reload, bind mounts) — via just docker-up
+├── docker-compose.prod.yml # Production topology (Traefik TLS, replicas, migrate job)
 ├── justfile            # Command runner
 └── README.md
 ```
@@ -212,7 +214,7 @@ just docker-build
 just docker-up
 
 # Production stack
-docker compose -f infra/docker/docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 ## Deployment
@@ -220,7 +222,7 @@ docker compose -f infra/docker/docker-compose.prod.yml up -d
 ### Docker Compose (production)
 
 ```bash
-docker compose -f infra/docker/docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 ### Kubernetes
