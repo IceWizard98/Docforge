@@ -39,6 +39,28 @@ def _extract_text_from_prosemirror(content: dict | None) -> str:
     return _node_text(content)
 
 
+def _mark_source_failed(source_doc_id: str) -> None:
+    """Best-effort: flip a source document to 'failed' after a classification
+    error so the UI leaves 'in coda' (and the 4s polling stops) instead of
+    hanging on 'uploaded' forever. Never masks the original error."""
+    from uuid import UUID
+
+    async def _set():
+        async with worker_session() as session:
+            res = await session.execute(
+                select(SourceDocumentModel).where(SourceDocumentModel.id == UUID(source_doc_id))
+            )
+            src = res.scalar_one_or_none()
+            if src is not None:
+                src.status = "failed"
+                await session.commit()
+
+    try:
+        asyncio.run(_set())
+    except Exception as e:
+        logger.error("Could not mark source %s as failed: %s", source_doc_id, e)
+
+
 @celery_app.task
 def classify_document_task(source_doc_id: str, doc_id: str | None = None) -> DocumentClassified:  # noqa: PLR0915
     try:
@@ -159,4 +181,5 @@ def classify_document_task(source_doc_id: str, doc_id: str | None = None) -> Doc
         return asyncio.run(_run())
     except Exception as e:
         logger.error("Classification failed for doc %s: %s", doc_id, e)
+        _mark_source_failed(source_doc_id)
         return DocumentClassified(document_id=doc_id)

@@ -3,7 +3,23 @@ from celery import Celery
 from config.settings import get_settings
 
 settings = get_settings()
-celery_app = Celery("docforge", broker=settings.redis_url, backend=settings.redis_url)
+# `include` makes the WORKER process import every task module on startup. Without
+# it, `celery -A workers.celery_app worker` imports only this file, so the
+# @celery_app.task tasks are never registered and dispatched messages are silently
+# discarded (e.g. uploaded docs stuck on "in coda"). autodiscover_tasks() would not
+# work here: the tasks live in workers/<name>.py, not the default workers/tasks.py.
+celery_app = Celery(
+    "docforge",
+    broker=settings.redis_url,
+    backend=settings.redis_url,
+    include=[
+        "workers.classification",
+        "workers.drafting",
+        "workers.export",
+        "workers.patching",
+        "workers.validation",
+    ],
+)
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
