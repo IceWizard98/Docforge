@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import DocumentListPanel from '@/components/workspace/DocumentListPanel.vue'
 import DropZoneOverlay from '@/components/common/DropZoneOverlay.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import { FileText, Plus, Clock, FileText as FileTextIcon } from '@lucide/vue'
+import { Sparkles, Plus, Clock, FileText as FileTextIcon } from '@lucide/vue'
 import { listDocuments, listTemplates, createDocument, uploadDocument } from '@/api/client'
 import type { DocumentResponse } from '@/types/document'
 
@@ -93,12 +93,12 @@ function formatDate(dateStr: string): string {
         <div class="text-center mb-10">
           <div class="flex justify-center mb-4">
             <div class="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <FileText class="w-8 h-8 text-primary" />
+              <Sparkles class="w-8 h-8 text-primary" />
             </div>
           </div>
           <h1 class="text-2xl font-bold text-foreground mb-2">DocForge</h1>
           <p class="text-sm text-foreground/50 max-w-sm mx-auto mb-6">
-            Crea, modifica e collabora su documenti con l'assistenza dell'AI
+            Parla con l'AI per redigere il tuo documento — il contenuto appare quando c'è qualcosa da mostrare
           </p>
           <button
             class="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium rounded-lg bg-primary text-white hover:bg-primary-light transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
@@ -106,7 +106,7 @@ function formatDate(dateStr: string): string {
             @click="createNew"
           >
             <Plus class="w-4 h-4" />
-            {{ creating ? 'Creazione...' : 'Nuovo Documento' }}
+            {{ creating ? 'Creazione...' : 'Inizia a scrivere' }}
           </button>
         </div>
 
