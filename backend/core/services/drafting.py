@@ -42,13 +42,19 @@ Document title: {title}
 Section title: {section_title}
 Section ID: {section_id}
 
+Richiesta dell'utente (AUTORITATIVA — questi dati sono VERI, usali e scrivili
+esplicitamente nel testo, NON come segnaposto):
+{brief}
+
 Ecco il contesto dai documenti sorgente:
 {context_pack}
 
-REGOLA ANTI-ALLUCINAZIONE (vincolante): ogni affermazione deve essere
-riconducibile al contesto sorgente. NON inventare fatti, clausole, nomi, importi
-o date non presenti nel contesto. Se un'informazione non è nelle fonti, NON
-scriverla come se fosse certa: marcala esplicitamente come segnaposto.
+REGOLA (vincolante): scrivi 'content' COMPLETO (mai vuoto). I dati FORNITI
+DALL'UTENTE qui sopra (nomi, parti, importi, durate, date, modalità) sono
+autoritativi: scrivili nel testo. Usa anche il contesto sorgente dove pertinente.
+NON inventare fatti che NON sono né nella richiesta utente né nel contesto: per
+quelli marca un segnaposto esplicito. Omettere o rendere segnaposto un dato che
+l'utente ha fornito è un errore grave quanto un'allucinazione.
 
 Ogni chunk nel contesto è preceduto da [source_doc_id=... chunk_id=...]: usa
 ESATTAMENTE quei valori quando citi una fonte (mai inventarli).
@@ -66,6 +72,28 @@ Return a JSON object with:
 - "placeholders": array of {{"slot_id":"...","reason":"..."}} for missing info
 
 Respond with valid JSON only."""
+
+
+def _normalize_sections(raw: object) -> list[dict]:
+    """Coerce an LLM-produced 'sections' value into [{section_id, title}].
+
+    Weak local models may emit sections as a list of strings, dicts without a
+    section_id, or junk. Normalize so generate_section's `section.get(...)` never
+    crashes the whole draft; drop entries without a title.
+    """
+    out: list[dict] = []
+    for s in raw if isinstance(raw, list) else []:
+        if isinstance(s, dict):
+            title = str(s.get("title") or "").strip()
+            sid = s.get("section_id") or f"sec_{uuid4().hex[:8]}"
+        elif isinstance(s, str):
+            title = s.strip()
+            sid = f"sec_{uuid4().hex[:8]}"
+        else:
+            continue
+        if title:
+            out.append({"section_id": sid, "title": title})
+    return out
 
 
 class DraftService:
@@ -88,31 +116,47 @@ class DraftService:
             )
             try:
                 result = await provider.generate_structured(prompt, dict)
-                return {
-                    "draft_id": f"draft_{uuid4().hex[:8]}",
-                    "chat_session_id": chat_session_id,
-                    "title": result.get("title", f"Draft from chat {chat_session_id[:8]}"),
-                    "sections": result.get("sections", []),
-                    "metadata": {
-                        "source": "chat",
-                        "message_count": len(messages),
-                        "intent": last_message[:200] if last_message else "",
-                    },
-                }
+                sections = _normalize_sections(result.get("sections"))
+                if sections:
+                    return {
+                        "draft_id": f"draft_{uuid4().hex[:8]}",
+                        "chat_session_id": chat_session_id,
+                        "title": result.get("title", f"Draft from chat {chat_session_id[:8]}"),
+                        "sections": sections,
+                        # Full user request — authoritative input for section content.
+                        "brief": last_message or "",
+                        "metadata": {
+                            "source": "chat",
+                            "message_count": len(messages),
+                            "intent": last_message[:200] if last_message else "",
+                        },
+                    }
+                logger.warning("LLM spec returned no usable sections; using default outline")
             except Exception:
                 logger.exception("LLM spec generation failed for session %s", chat_session_id)
+        # Fallback when the LLM didn't return a usable outline (weak local models
+        # often emit prose instead of JSON despite format=json). A sensible default
+        # outline keeps the draft from being empty; section content is still driven
+        # by the user's brief + corpus grounding.
+        last_message = messages[-1]["content"] if messages else ""
+        default_titles = [
+            "Premesse e parti", "Oggetto",
+            "Corrispettivo e durata", "Obblighi e risoluzione",
+        ]
         spec = {
             "draft_id": f"draft_{uuid4().hex[:8]}",
             "chat_session_id": chat_session_id,
-            "title": "Generated Document",
-            "sections": [],
-            "metadata": {},
+            "title": f"Draft from chat {chat_session_id[:8]}",
+            "sections": [
+                {"section_id": f"sec_{uuid4().hex[:8]}", "title": t} for t in default_titles
+            ],
+            "brief": last_message or "",
+            "metadata": {
+                "source": "chat",
+                "message_count": len(messages),
+                "intent": last_message[:200] if last_message else "",
+            },
         }
-        last_message = messages[-1]["content"] if messages else ""
-        spec["title"] = f"Draft from chat {chat_session_id[:8]}"
-        spec["metadata"]["source"] = "chat"
-        spec["metadata"]["message_count"] = len(messages)
-        spec["metadata"]["intent"] = last_message[:200] if last_message else ""
         return spec
 
     async def generate_section(
@@ -145,6 +189,7 @@ class DraftService:
                 title=spec.get("title", ""),
                 section_title=section.get("title", ""),
                 section_id=section_id,
+                brief=spec.get("brief", "") or "(nessuna richiesta specifica)",
                 context_pack=context_text or "(no context available)",
             )
             try:

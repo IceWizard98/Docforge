@@ -24,4 +24,7 @@ class OllamaProvider(OpenAICompatProvider):
         return {"stream": False}
 
     def _structured_extra(self) -> dict:
-        return {"format": "json"}
+        # Ollama's OpenAI-compatible /v1 endpoint enforces JSON via response_format
+        # (the native `format: "json"` param is ignored there, so the model would
+        # otherwise return prose/markdown and JSON parsing fails).
+        return {"response_format": {"type": "json_object"}}

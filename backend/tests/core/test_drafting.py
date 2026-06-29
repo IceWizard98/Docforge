@@ -5,11 +5,31 @@ import pytest
 from core.services.context import ContextChunk, ContextPack, ContextPackService, ContextSource
 from core.services.drafting import (
     DraftService,
+    _normalize_sections,
     assemble_draft_content,
     build_section_node,
     build_section_paragraph,
     spec_sections_with_provenance,
 )
+
+
+class TestNormalizeSections:
+    def test_coerces_strings_dicts_and_drops_junk(self):
+        out = _normalize_sections([
+            "Premesse",
+            {"title": "Oggetto", "section_id": "s1"},
+            {"title": "   "},   # empty title -> dropped
+            42,                  # junk -> dropped
+            {"foo": "bar"},     # no title -> dropped
+        ])
+        assert [s["title"] for s in out] == ["Premesse", "Oggetto"]
+        assert all(s["section_id"] for s in out)
+        assert out[1]["section_id"] == "s1"
+
+    def test_non_list_returns_empty(self):
+        assert _normalize_sections(None) == []
+        assert _normalize_sections("nope") == []
+        assert _normalize_sections({}) == []
 
 
 class TestDraftAssembly:

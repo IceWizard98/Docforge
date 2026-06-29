@@ -20,7 +20,7 @@ from adapters.postgresql.repositories import DocumentRepository
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.document import DocumentResponse
 from api.schemas.drafts import DraftCreate, DraftResponse, SectionRegenerateRequest
-from core.models.document import Document
+from core.models.document import Document, DocumentStatus
 from workers.drafting import generate_draft_task, generate_section_task
 
 logger = logging.getLogger(__name__)
@@ -220,9 +220,13 @@ async def promote_draft(
     title = spec.get("title") or draft.title
     doc_type = spec.get("doc_type") or ""
 
+    # Promotion makes the draft a definitive document: it must NOT keep the
+    # default "draft" status, otherwise it shows up as another unfinished draft
+    # in the documents home.
     doc = Document(
         title=title,
         doc_type=doc_type,
+        status=DocumentStatus.APPROVED,
         created_by=current_user.user_id,
     )
     repo = DocumentRepository(session)

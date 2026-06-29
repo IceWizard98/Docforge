@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class DraftCreate(BaseModel):
@@ -22,6 +22,12 @@ class DraftResponse(BaseModel):
     progress: dict = {}
     created_at: datetime
     updated_at: datetime
+
+    # ORM columns are UUID; coerce to str (pydantic v2 won't auto-cast UUID->str).
+    @field_validator("id", "document_id", "chat_session_id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, v: object) -> object:
+        return str(v) if isinstance(v, UUID) else v
 
 
 class SectionRegenerateRequest(BaseModel):

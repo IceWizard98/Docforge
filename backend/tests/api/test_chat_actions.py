@@ -1,6 +1,6 @@
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,48 +11,42 @@ from api.routes.chat import (
 )
 
 
-class TestExecuteDraftActionProvenance:
+class TestExecuteDraftActionAsync:
     @pytest.mark.asyncio
-    async def test_spec_keeps_provenance_and_content_carries_marks(self):
-        action = {"type": "draft", "params": {
-            "title": "Contratto X",
-            "doc_type": "contract",
-            "sections": [{
-                "title": "Parti",
-                "content": "Le parti sono Acme e Beta.",
-                "provenance": [{"source_doc_id": "d1", "chunk_id": "c1", "confidence": 0.9}],
-                "runs": [
-                    {"text": "Le parti sono Acme e Beta.",
-                     "provenance": {"source_doc_id": "d1", "chunk_id": "c1", "confidence": 0.9},
-                     "placeholder": None},
-                ],
-            }],
-        }}
+    async def test_dispatches_worker_with_generating_status(self):
+        # Local-first: the chat only signals intent; the per-section worker builds
+        # the document. The draft is created 'generating' and the worker dispatched
+        # with the conversation (so generate_spec/section see the user's brief).
+        action = {"type": "draft", "params": {"title": "Contratto X", "doc_type": "contract"}}
         session = MagicMock()
         session.add = MagicMock()
         session.flush = AsyncMock()
+        sid = uuid.uuid4()
+        messages = [{"role": "user", "content": "Voglio un contratto per Acme, 60k in 12 rate"}]
 
-        draft_id, doc_content, actions = await _execute_draft_action(
-            action, uuid.uuid4(), None, SimpleNamespace(user_id=str(uuid.uuid4())), session
-        )
+        with patch("api.routes.chat.generate_draft_task") as mock_task:
+            draft_id, doc_content, actions = await _execute_draft_action(
+                action, sid, None, SimpleNamespace(user_id=str(uuid.uuid4())), session, messages
+            )
 
         assert draft_id is not None
-        # content paragraph carries the provenance mark per span
-        para = doc_content["content"][0]["content"][0]
-        text_node = para["content"][0]
-        assert text_node["marks"][0]["type"] == "provenance"
-        assert text_node["marks"][0]["attrs"]["sourceDocId"] == "d1"
-
-        # the persisted DraftModel.spec keeps per-section provenance for promote-time links
+        assert doc_content is None  # nothing inline; the worker fills it
         draft_model = session.add.call_args[0][0]
-        assert draft_model.spec["sections"][0]["provenance"][0]["chunk_id"] == "c1"
+        assert draft_model.status == "generating"
+
+        mock_task.apply_async.assert_called_once()
+        task_args = mock_task.apply_async.call_args[0][0]
+        assert task_args[1] == str(sid)        # chat_session_id
+        assert task_args[2] == messages         # the brief travels to the worker
+
+        assert actions[0]["action"] == "draft_generating"
+        assert actions[0]["payload"]["draft_id"] == str(draft_id)
 
     @pytest.mark.asyncio
-    async def test_no_sections_returns_noop(self):
-        session = MagicMock()
+    async def test_non_draft_returns_noop(self):
         out = await _execute_draft_action(
-            {"type": "draft", "params": {"sections": []}},
-            uuid.uuid4(), None, SimpleNamespace(user_id=str(uuid.uuid4())), session,
+            {"type": "answer_question"},
+            uuid.uuid4(), None, SimpleNamespace(user_id=str(uuid.uuid4())), MagicMock(), [],
         )
         assert out == (None, None, [])
 

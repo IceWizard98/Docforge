@@ -45,16 +45,42 @@ def generate_draft_task(
                     chat_session_id, messages, llm=provider
                 )
                 sections = spec.get("sections", [])
+                total = len(sections)
+
+                async def _set_progress(completed: int) -> None:
+                    # Tiny UPDATE so the UI sees the document being built section by
+                    # section instead of a dead 0/0 spinner for minutes.
+                    async with session_factory() as session:
+                        d = await session.get(DraftModel, UUID(draft_id))
+                        if d is not None:
+                            d.progress = {"total_sections": total, "completed_sections": completed}
+                            flag_modified(d, "progress")
+                            await session.commit()
+
+                # Show the real total up front.
+                await _set_progress(0)
+
+                done = 0
+                progress_lock = asyncio.Lock()
 
                 async def _gen(sec: dict) -> dict:
+                    nonlocal done
                     async with session_factory() as session:
+                        # No LLM reranker (llm_provider=None): on local models it
+                        # adds a slow, failure-prone LLM call per section; base
+                        # vector+fulltext scores are enough for grounding.
                         ctx_svc = ContextPackService(
-                            pgvector=PgvectorAdapter(session), llm_provider=provider
+                            pgvector=PgvectorAdapter(session), llm_provider=None
                         )
                         service = DraftService(llm=provider, context_service=ctx_svc)
-                        return await service.generate_section(
+                        result = await service.generate_section(
                             spec, sec, context_pack=None, llm=provider, context_service=ctx_svc
                         )
+                    async with progress_lock:
+                        done += 1
+                        completed = done
+                    await _set_progress(completed)
+                    return result
 
                 results = await asyncio.gather(*(_gen(sec) for sec in sections))
 
@@ -64,11 +90,26 @@ def generate_draft_task(
                         logger.error("Draft %s not found for generation", draft_id)
                         return
 
+                    existing_spec = draft.spec or {}
+                    if not results:
+                        # No outline/sections produced (weak model or spec failure):
+                        # fail loudly instead of silently completing with an empty
+                        # document that the frontend would write over the open doc.
+                        logger.error("Draft %s produced no sections; marking failed", draft_id)
+                        draft.status = "failed"
+                        flag_modified(draft, "status")
+                        await session.commit()
+                        return
+
                     draft.title = spec.get("title") or draft.title
                     draft.spec = {
-                        **(draft.spec or {}),
-                        "title": spec.get("title", ""),
-                        "doc_type": spec.get("doc_type", ""),
+                        **existing_spec,
+                        "title": spec.get("title") or existing_spec.get("title", ""),
+                        # Preserve the chat-captured doc_type/language; generate_spec
+                        # doesn't emit them. Persist the brief for section regen.
+                        "doc_type": existing_spec.get("doc_type") or spec.get("doc_type", ""),
+                        "language": existing_spec.get("language", "it"),
+                        "brief": spec.get("brief", "") or existing_spec.get("brief", ""),
                         "sections": spec_sections_with_provenance(results),
                     }
                     draft.content = assemble_draft_content(results)
@@ -115,8 +156,10 @@ def generate_section_task(
                     return
 
                 provider = get_llm_provider()
+                # No LLM reranker (consistent with generate_draft_task): slow and
+                # unreliable on local models; base RRF scores are enough.
                 ctx_svc = ContextPackService(
-                    pgvector=PgvectorAdapter(session), llm_provider=provider
+                    pgvector=PgvectorAdapter(session), llm_provider=None
                 )
                 service = DraftService(llm=provider, context_service=ctx_svc)
                 section = {

@@ -179,6 +179,7 @@ async def agentic_answer(
     system_prompt: str,
     user_text: str,
     executor: ToolExecutor,
+    max_iters: int = 4,
 ) -> str:
     """Unified entry point: native tool-calling when supported, else emulated."""
     if getattr(provider, "supports_tools", False):
@@ -186,5 +187,7 @@ async def agentic_answer(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_text},
         ]
-        return await run_agent(provider, messages, CORPUS_TOOLS, executor)
-    return await run_agent_emulated(provider, system_prompt, user_text, CORPUS_TOOLS, executor)
+        return await run_agent(provider, messages, CORPUS_TOOLS, executor, max_iters=max_iters)
+    return await run_agent_emulated(
+        provider, system_prompt, user_text, CORPUS_TOOLS, executor, max_iters=max_iters
+    )

@@ -93,6 +93,26 @@ class TestPromoteDraft:
         assert draft.document_id is not None
 
     @pytest.mark.asyncio
+    async def test_promote_sets_approved_status(self, async_client, mock_session, auth_headers):
+        """Promoted document must be 'approved' (definitive), not left as 'draft'."""
+        draft = _build_mock_draft()
+        draft_result = MagicMock()
+        draft_result.scalar_one_or_none.return_value = draft
+        mock_session.execute.return_value = draft_result
+
+        new_doc = build_mock_document({"title": "My Doc", "doc_type": "contract"})
+
+        with patch.object(DocumentRepository, "create", return_value=new_doc) as mock_create:
+            resp = await async_client.post(
+                f"/api/v1/drafts/{draft.id}/promote",
+                headers=auth_headers,
+            )
+
+        assert resp.status_code == 201
+        doc_arg = mock_create.call_args.args[0]
+        assert str(getattr(doc_arg.status, "value", doc_arg.status)) == "approved"
+
+    @pytest.mark.asyncio
     async def test_promote_draft_not_found(self, async_client, mock_session, auth_headers):
         """404 when draft does not exist."""
         result = MagicMock()

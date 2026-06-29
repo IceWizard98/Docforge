@@ -81,6 +81,34 @@ async def test_corpus_catalog_empty_when_no_sources():
 
 # --- Step 1: build SourceRef list from collected chunks ----------------------
 
+class TestGenerateChatReply:
+    @pytest.mark.asyncio
+    async def test_normalizes_non_dict_action_and_defaults_reply(self):
+        # A weak local model under format:json may emit action as a STRING; if not
+        # normalized, downstream action_data.get("type") raises AttributeError -> 500.
+        from api.routes.chat import _generate_chat_reply
+
+        provider = SimpleNamespace(
+            generate_structured=AsyncMock(return_value={"action": "draft"})
+        )
+        out = await _generate_chat_reply(provider, "sys", "user")
+        assert out["action"] is None
+        assert isinstance(out["reply"], str) and out["reply"].strip()  # no blank bubble
+
+    @pytest.mark.asyncio
+    async def test_valid_dict_action_passes_through(self):
+        from api.routes.chat import _generate_chat_reply
+
+        provider = SimpleNamespace(
+            generate_structured=AsyncMock(
+                return_value={"reply": "ok", "action": {"type": "draft", "params": {}}}
+            )
+        )
+        out = await _generate_chat_reply(provider, "sys", "user")
+        assert out["action"]["type"] == "draft"
+        assert out["reply"] == "ok"
+
+
 class TestBuildMessageSources:
     @pytest.mark.asyncio
     async def test_builds_refs_with_titles(self):
@@ -96,11 +124,49 @@ class TestBuildMessageSources:
 
         refs = await _build_message_sources(session, chunks)
         assert len(refs) == 1
-        assert refs[0]["sourceDocId"] == str(sid1)
+        assert refs[0]["doc_id"] == str(sid1)
         assert refs[0]["title"] == "nda_acme.pdf"
-        assert refs[0]["chunkId"] == "c1"
+        assert refs[0]["chunk_id"] == "c1"
         assert refs[0]["confidence"] == pytest.approx(0.9)
         assert "alpha" in refs[0]["snippet"]
+
+    @pytest.mark.asyncio
+    async def test_refs_validate_against_response_schema(self):
+        # The stored message.sources JSON is validated against SourceCitationResponse
+        # when ChatMessageResponse is built; mismatched keys (e.g. camelCase) raise a
+        # 500. This guards the contract whenever retrieval actually returns sources.
+        from api.schemas.chat import SourceCitationResponse
+
+        sid = uuid.uuid4()
+        chunks = [ContextChunk(chunk_id="c1", content="alpha", source_doc_id=str(sid), relevance_score=0.8)]
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+
+        refs = await _build_message_sources(session, chunks)
+        for r in refs:
+            SourceCitationResponse.model_validate(r)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_dedups_by_source_file(self):
+        # Multiple chunks from the SAME source must collapse to ONE pill (the
+        # highest-confidence one), not N identical pills.
+        sid = uuid.uuid4()
+        chunks = [
+            ContextChunk(chunk_id="c1", content="a", source_doc_id=str(sid), relevance_score=0.4),
+            ContextChunk(chunk_id="c2", content="b", source_doc_id=str(sid), relevance_score=0.9),
+            ContextChunk(chunk_id="c3", content="c", source_doc_id=str(sid), relevance_score=0.6),
+        ]
+        src = SimpleNamespace(id=sid, filename="contract.pdf")
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [src]
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+
+        refs = await _build_message_sources(session, chunks)
+        assert len(refs) == 1
+        assert refs[0]["confidence"] == pytest.approx(0.9)
 
     @pytest.mark.asyncio
     async def test_dedups_by_chunk_id(self):
