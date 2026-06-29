@@ -65,14 +65,16 @@ db-init:
     ./infra/scripts/init-db.sh
 
 # Docker — single local stack (infra + api + worker + frontend, hot reload).
-docker-build:
-    docker compose build
-
-docker-up:
-    docker compose up -d
-
-docker-down:
-    docker compose down
+# Usage: `just docker build` | `just docker up` | `just docker down`
+docker action:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{action}}" in
+      build) docker compose build ;;
+      up)    docker compose up -d ;;
+      down)  docker compose down ;;
+      *) echo "usage: just docker [build|up|down]"; exit 1 ;;
+    esac
 
 # Clean
 clean:

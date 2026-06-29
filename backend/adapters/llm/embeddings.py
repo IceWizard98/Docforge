@@ -28,7 +28,9 @@ class OllamaEmbeddingAdapter:
         import httpx
         if not base_url.endswith("/v1"):
             base_url = base_url.rstrip("/") + "/v1"
-        self._client = httpx.AsyncClient(base_url=base_url)
+        # httpx defaults to a 5s timeout, which the first embedding call (cold
+        # model load) routinely exceeds -> ReadTimeout and a failed index.
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=120.0)
         self._model = model
 
     async def generate_embedding(self, text: str) -> list[float]:

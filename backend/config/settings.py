@@ -36,13 +36,15 @@ class Settings(BaseSettings):
     otel_service_name: str = "docforge"
     enable_otel: bool = False
     tesseract_cmd: str = "tesseract"
-    embedding_provider: str = "openai"
+    # Local-first defaults: ollama nomic-embed-text (768) matches the pgvector
+    # column dimension after migration 022. Using OpenAI (1536) requires migrating
+    # the column back to vector(1536) and reindexing.
+    embedding_provider: str = "ollama"
     openai_embedding_model: str = "text-embedding-3-small"
     ollama_embedding_model: str = "nomic-embed-text"
     # Single source of truth for the embedding vector size. MUST match the
-    # pgvector column dimension in migration 008 and the chosen provider's
-    # output (text-embedding-3-small=1536, nomic-embed-text=768).
-    embedding_dimension: int = 1536
+    # pgvector column dimension (vector(768) in migration 022).
+    embedding_dimension: int = 768
 
 
     @property

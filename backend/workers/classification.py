@@ -25,7 +25,8 @@ Return a JSON object with:
 - "doc_type": the document type, chosen STRICTLY from this list: {doc_types}.
   Use "other" if none fits.
 - "language": the detected language code (e.g. "en", "it", "fr", "de", "es")
-- "tags": an array of 2-5 relevant tag strings describing the document
+- "tags": an array of 2-5 relevant tag strings describing the document, written
+  IN THE SAME LANGUAGE AS THE DOCUMENT (e.g. Italian tags for an Italian document)
 - "jurisdiction": the jurisdiction if applicable (e.g. "US", "EU", "UK", "IT", or "")
 - "parties": an array of party names mentioned in the document, or empty array
 

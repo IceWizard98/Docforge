@@ -79,6 +79,12 @@ class PgvectorAdapter:
             clauses.append("sd.classification_confidence >= :confidence_min")
             params["confidence_min"] = filters.confidence_min
 
+        if filters.owner_id:
+            # Per-user corpus isolation: only this owner's sources (legacy rows
+            # with created_by NULL are excluded for everyone).
+            clauses.append("sd.created_by = CAST(:owner_id AS uuid)")
+            params["owner_id"] = str(filters.owner_id)
+
         if clauses:
             return " AND " + " AND ".join(clauses), params
         return "", {}

@@ -3,6 +3,22 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+def test_owner_filter_scopes_by_created_by():
+    # Corpus isolation: owner_id must add a created_by predicate so a user's
+    # retrieval can never return another user's source chunks.
+    from adapters.postgresql.pgvector import PgvectorAdapter
+    from core.services.search import RetrievalFilters
+
+    adapter = PgvectorAdapter(MagicMock())
+    clause, params = adapter._build_filter_clauses(RetrievalFilters(owner_id="11111111-1111-1111-1111-111111111111"))
+    assert "sd.created_by" in clause
+    assert params["owner_id"] == "11111111-1111-1111-1111-111111111111"
+
+    # Without owner_id, no created_by scoping is added.
+    clause2, _ = adapter._build_filter_clauses(RetrievalFilters())
+    assert "created_by" not in clause2
+
+
 @pytest.mark.asyncio
 async def test_create_extension():
     mock_session = AsyncMock()
