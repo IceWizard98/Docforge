@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import router from './router'
+import router, { recoverFromChunkError } from './router'
 import App from './App.vue'
 // Self-hosted fonts (bundled by Vite -> served from /assets) so no external
 // request to fonts.googleapis.com, which the strict CSP blocks.
@@ -20,7 +20,19 @@ authStore.checkToken()
 
 app.config.errorHandler = (err, _instance, info) => {
   console.error('Global error:', err, info)
+  recoverFromChunkError(err)
 }
+
+// Vite fires this when a dynamically imported chunk fails to load (stale build
+// after a redeploy). Prevent the default uncaught rejection and reload once to
+// fetch the fresh build.
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault()
+  recoverFromChunkError(
+    (event as Event & { payload?: unknown }).payload ??
+      new Error('Failed to fetch dynamically imported module'),
+  )
+})
 
 app.use(router)
 app.mount('#app')
