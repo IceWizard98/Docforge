@@ -41,7 +41,8 @@ class TestDraftAssembly:
 
     def test_build_section_paragraph_runs_marks(self):
         node = build_section_paragraph({"runs": [
-            {"text": "A", "provenance": {"source_doc_id": "d1", "chunk_id": "c1"}, "placeholder": None},
+            {"text": "A",
+             "provenance": {"source_doc_id": "d1", "chunk_id": "c1"}, "placeholder": None},
             {"text": "B", "provenance": None, "placeholder": {"slot_id": "s", "reason": "r"}},
         ]})
         assert node["content"][0]["marks"][0]["type"] == "provenance"
@@ -165,11 +166,10 @@ class TestDraftService:
 
     @pytest.mark.asyncio
     async def test_generate_section_with_llm_provider(self):
+        # Local models can't reliably emit nested JSON, so the section body is
+        # generated as PLAIN TEXT via provider.generate (not generate_structured).
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "This is the section content",
-            "provenance": [{"source": "doc_1", "confidence": 0.95}],
-        }
+        mock_llm.generate.return_value = "This is the section content"
         self.service._llm = mock_llm
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Premesse"}
@@ -177,11 +177,30 @@ class TestDraftService:
         result = await self.service.generate_section(spec, section, context)
         assert result["content"] == "This is the section content"
         assert len(result["provenance"]) > 0
+        mock_llm.generate.assert_awaited_once()
+        mock_llm.generate_structured.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_generate_section_plain_text_with_newlines_and_quotes(self):
+        # Regression: the model returns prose with literal newlines and quotes
+        # (exactly what broke JSON parsing on llama3.1:8b). Plain-text generation
+        # must accept it verbatim, never raise, never yield empty content.
+        prose = 'Tra "Strategy Srl" e Luis.\n\nIl compenso è 60.000 EUR.\n'
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = prose
+        self.service._llm = mock_llm
+        spec = {"title": "Contratto"}
+        section = {"section_id": "sec_1", "title": "Premesse"}
+        context = self._make_context([{"document_id": "doc_1", "text": "legal"}])
+        result = await self.service.generate_section(spec, section, context)
+        assert result["content"] == prose.strip()
+        assert result["content"]
+        assert result["runs"]
 
     @pytest.mark.asyncio
     async def test_generate_section_llm_failure_falls_back(self):
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.side_effect = RuntimeError("API error")
+        mock_llm.generate.side_effect = RuntimeError("API error")
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Premesse"}
         context = self._make_context([{"document_id": "doc_1", "text": "legal text"}])
@@ -192,10 +211,7 @@ class TestDraftService:
     @pytest.mark.asyncio
     async def test_generate_section_with_context_service_builds_context(self):
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "Content from context",
-            "provenance": [{"source": "doc_1", "confidence": 0.9}],
-        }
+        mock_llm.generate.return_value = "Content from context"
         mock_svc = AsyncMock()
         mock_svc.build_section_context.return_value = self._make_context(
             [{"document_id": "doc_1", "text": "source text"}]
@@ -212,10 +228,7 @@ class TestDraftService:
     @pytest.mark.asyncio
     async def test_generate_section_uses_existing_context_over_service(self):
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "Existing context used",
-            "provenance": [],
-        }
+        mock_llm.generate.return_value = "Existing context used"
         mock_svc = AsyncMock()
         service = DraftService(llm=mock_llm)
         spec = {"title": "Test"}
@@ -228,17 +241,11 @@ class TestDraftService:
         mock_svc.build_section_context.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_generate_section_maps_runs(self):
+    async def test_generate_section_grounded_content_single_sourced_run(self):
+        # With grounding context, plain-text content becomes one sourced run whose
+        # provenance is resolved from the retrieved pack (not from the model).
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "Le parti sono Acme e Beta.",
-            "provenance": [{"source": "doc_1", "confidence": 0.9}],
-            "runs": [
-                {"text": "Le parti sono Acme e Beta.",
-                 "provenance": {"source": "doc_1", "chunk_id": "chk_1", "confidence": 0.9},
-                 "placeholder": None},
-            ],
-        }
+        mock_llm.generate.return_value = "Le parti sono Acme e Beta."
         self.service._llm = mock_llm
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Parti"}
@@ -250,13 +257,10 @@ class TestDraftService:
 
     @pytest.mark.asyncio
     async def test_generate_section_unsourced_content_marked_placeholder(self):
-        # No provenance and no runs -> the content must be flagged as a placeholder
-        # span, never silently accepted as sourced.
+        # No context -> the content must be flagged as a placeholder span, never
+        # silently accepted as sourced.
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "Clausola inventata senza fonte.",
-            "provenance": [],
-        }
+        mock_llm.generate.return_value = "Clausola inventata senza fonte."
         self.service._llm = mock_llm
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Oggetto"}
@@ -271,10 +275,7 @@ class TestDraftService:
     @pytest.mark.asyncio
     async def test_generate_section_provenance_includes_chunk_id(self):
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "Provenance test",
-            "provenance": [{"source": "doc_1", "confidence": 0.95}],
-        }
+        mock_llm.generate.return_value = "Provenance test"
         self.service._llm = mock_llm
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Premesse"}
@@ -293,14 +294,11 @@ class TestDraftService:
 
     @pytest.mark.asyncio
     async def test_generate_section_provenance_falls_back_to_pack_source(self):
-        # LLM echoes a free-form "source" that matches no chunk id; provenance
-        # must still carry a real source_doc_id/chunk_id from the pack so the
+        # Provenance is resolved purely from the retrieved pack (the model no
+        # longer emits it), so it must carry a real source_doc_id/chunk_id so the
         # promote-time NOT NULL FK can be satisfied.
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.return_value = {
-            "content": "Clausola.",
-            "provenance": [{"source": "nome-libero-non-id", "confidence": 0.8}],
-        }
+        mock_llm.generate.return_value = "Clausola."
         self.service._llm = mock_llm
         spec = {"title": "T"}
         section = {"section_id": "sec_1", "title": "Parti"}
@@ -313,10 +311,10 @@ class TestDraftService:
 
     @pytest.mark.asyncio
     async def test_generate_section_context_prompt_includes_italian_prefix(self):
+        # The plain-text prompt must surface the source context so the model can
+        # ground its prose; echo it back as the generated body to assert it.
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.side_effect = (
-            lambda prompt, _: {"content": prompt, "provenance": []}
-        )
+        mock_llm.generate.side_effect = lambda prompt, *a, **k: prompt
         self.service._llm = mock_llm
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Premesse"}
@@ -327,7 +325,7 @@ class TestDraftService:
     @pytest.mark.asyncio
     async def test_generate_section_no_context_fallback(self):
         mock_llm = AsyncMock()
-        mock_llm.generate_structured.side_effect = RuntimeError("fail")
+        mock_llm.generate.side_effect = RuntimeError("fail")
         spec = {"title": "Test"}
         section = {"section_id": "sec_1", "title": "Premesse"}
         result = await self.service.generate_section(

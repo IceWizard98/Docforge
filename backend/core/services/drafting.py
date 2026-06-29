@@ -36,11 +36,15 @@ Return a JSON object with:
 
 Respond with valid JSON only."""
 
-SECTION_PROMPT_TEMPLATE = """Write content for the document section based on spec and context.
+# Plain prose, NOT JSON. Local models (llama3.1:8b) cannot reliably wrap a long
+# multi-paragraph section inside a JSON string — they emit unescaped newlines /
+# quotes and JSON parsing fails, leaving the section empty. Asking for raw text
+# is robust: the whole response IS the section content. Provenance is resolved
+# separately from the retrieved context pack, not from the model.
+SECTION_PROMPT_TEMPLATE = """Scrivi il testo di una sezione di documento.
 
-Document title: {title}
-Section title: {section_title}
-Section ID: {section_id}
+Titolo del documento: {title}
+Titolo della sezione: {section_title}
 
 Richiesta dell'utente (AUTORITATIVA — questi dati sono VERI, usali e scrivili
 esplicitamente nel testo, NON come segnaposto):
@@ -49,29 +53,15 @@ esplicitamente nel testo, NON come segnaposto):
 Ecco il contesto dai documenti sorgente:
 {context_pack}
 
-REGOLA (vincolante): scrivi 'content' COMPLETO (mai vuoto). I dati FORNITI
-DALL'UTENTE qui sopra (nomi, parti, importi, durate, date, modalità) sono
-autoritativi: scrivili nel testo. Usa anche il contesto sorgente dove pertinente.
-NON inventare fatti che NON sono né nella richiesta utente né nel contesto: per
-quelli marca un segnaposto esplicito. Omettere o rendere segnaposto un dato che
-l'utente ha fornito è un errore grave quanto un'allucinazione.
-
-Ogni chunk nel contesto è preceduto da [source_doc_id=... chunk_id=...]: usa
-ESATTAMENTE quei valori quando citi una fonte (mai inventarli).
-
-Write the section in a professional, clear style, split into runs.
-Return a JSON object with:
-- "content": the full section text (concatenation of the runs' text)
-- "provenance": array of {{"source_doc_id":"...","chunk_id":"...","confidence":<float>}}
-  for sourced parts (i valori presi dalle etichette del contesto)
-- "runs": array of spans, each {{"text": "...",
-    "provenance": {{"source_doc_id":"...","chunk_id":"...","confidence":<float>}} | null,
-    "placeholder": {{"slot_id":"...","reason":"..."}} | null }}
-  A run is EITHER sourced (provenance set, placeholder null) OR a placeholder
-  (placeholder set, provenance null) for information not found in the sources.
-- "placeholders": array of {{"slot_id":"...","reason":"..."}} for missing info
-
-Respond with valid JSON only."""
+REGOLE (vincolanti):
+- Scrivi SOLO il testo della sezione, in prosa professionale e chiara. NIENTE
+  JSON, niente markdown, niente intestazioni o preamboli tipo "Ecco la sezione".
+- Scrivi nella STESSA LINGUA della richiesta dell'utente qui sopra.
+- I dati forniti dall'utente (nomi, parti, importi, durate, date, modalità) sono
+  autoritativi: scrivili nel testo. Usa anche il contesto sorgente dove pertinente.
+- NON inventare fatti che non sono né nella richiesta utente né nel contesto: per
+  un dato realmente mancante usa un segnaposto esplicito tra parentesi quadre,
+  es. [DA COMPLETARE: ...]. Il testo non deve mai essere vuoto."""
 
 
 def _normalize_sections(raw: object) -> list[dict]:
@@ -193,11 +183,13 @@ class DraftService:
                 context_pack=context_text or "(no context available)",
             )
             try:
-                result = await provider.generate_structured(prompt, dict)
-                content = result.get("content", "")
-                provenance_raw = result.get("provenance", [])
-                provenance = self._build_provenance(provenance_raw, context_pack)
-                runs = self._build_runs(result, content, provenance)
+                # Plain text: the whole response is the section body. Provenance is
+                # derived from the retrieved pack (not the model), and the content is
+                # mapped to a single run — sourced if grounded, placeholder if not.
+                response = await provider.generate(prompt)
+                content = (response or "").strip()
+                provenance = self._build_provenance([], context_pack)
+                runs = self._build_runs({}, content, provenance)
                 return {
                     "section_id": section_id,
                     "title": section.get("title", ""),
