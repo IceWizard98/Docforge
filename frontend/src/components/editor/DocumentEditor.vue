@@ -435,6 +435,7 @@ async function saveVersion() {
                   <div class="bg-card rounded-lg shadow-sm border border-primary/10">
                     <TiptapEditor
                       ref="editorRef"
+                      :key="route.params.id as string"
                       :document-id="route.params.id as string"
                       :content="(documentStore.content as Record<string, unknown> | undefined)"
                       @save="documentStore.saveContent"

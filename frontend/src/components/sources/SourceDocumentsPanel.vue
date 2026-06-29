@@ -6,8 +6,11 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { listSources, extractApiError } from '@/api/client'
 import type { SourceDocumentResponse } from '@/api/client'
+import { useDocTypeLabel } from '@/composables/useDocTypeLabel'
 
 const props = defineProps<{ documentId: string }>()
+
+const docTypeLabel = useDocTypeLabel()
 
 const sources = ref<SourceDocumentResponse[]>([])
 const loading = ref(true)
@@ -69,7 +72,7 @@ onMounted(fetchSources)
             <FileText class="h-4 w-4 text-primary shrink-0" />
             <span class="text-sm font-medium text-foreground truncate">{{ source.filename }}</span>
           </div>
-          <span class="text-xs text-foreground/40 shrink-0 uppercase">{{ source.doc_type || 'N/A' }}</span>
+          <span class="text-xs text-foreground/40 shrink-0">{{ docTypeLabel(source.doc_type) }}</span>
         </div>
 
         <div v-if="source.language || source.tags?.length || source.jurisdiction || source.parties?.length" class="mt-2 flex flex-wrap gap-1">

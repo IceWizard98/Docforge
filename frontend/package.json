@@ -13,6 +13,8 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/lexend": "^5.2.11",
+    "@fontsource-variable/source-sans-3": "^5.2.9",
     "@lucide/vue": "^1.17.0",
     "@tiptap/core": "^3.0.0",
     "@tiptap/extension-placeholder": "^3.0.0",
@@ -38,9 +40,11 @@
     "prosemirror-transform": "^1.10.0",
     "prosemirror-view": "^1.38.0",
     "vue": "^3.5.0",
+    "vue-i18n": "^9.14.5",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@intlify/unplugin-vue-i18n": "^11.2.4",
     "@tailwindcss/vite": "^4.0.0",
     "@types/dompurify": "^3.0.5",
     "@vitejs/plugin-vue": "^5.0.0",

@@ -1,11 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Source Sans 3', system-ui, -apple-system, sans-serif;
-  --font-heading: 'Lexend', 'Source Sans 3', system-ui, sans-serif;
+  --font-sans: 'Source Sans 3 Variable', 'Source Sans 3', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Lexend Variable', 'Lexend', 'Source Sans 3 Variable', system-ui, sans-serif;
   --color-primary: #1E3A8A;
   --color-primary-light: #1E40AF;
   --color-secondary: #475569;

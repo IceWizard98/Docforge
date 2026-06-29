@@ -63,7 +63,11 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config as any
     if (!originalRequest) return Promise.reject(error)
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Exempt the refresh call itself: if /auth/refresh 401s it must reject (so the
+    // catch below clears tokens + redirects), not get queued — otherwise the
+    // awaited refresh never settles and isRefreshing stays stuck (deadlock).
+    const isRefreshCall = (originalRequest.url || '').includes('/auth/refresh')
+    if (error.response?.status === 401 && !originalRequest._retry && !isRefreshCall) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject })
@@ -114,6 +118,12 @@ export interface AuthResponse {
   user: { id: string; email: string; displayName: string }
 }
 
+// Backend serializes the user snake_case ({display_name}); map to camelCase so
+// currentUser.displayName isn't silently undefined.
+function mapAuthUser(u: any): AuthResponse['user'] {
+  return { id: u?.id, email: u?.email, displayName: u?.displayName ?? u?.display_name ?? '' }
+}
+
 export async function login(email: string, password: string): Promise<AuthResponse> {
   const response = await apiClient.post('/auth/login', { email, password })
   const data = response.data
@@ -124,7 +134,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
   if (data.refresh_token) {
     localStorage.setItem('refresh_token', data.refresh_token)
   }
-  return { token, user }
+  return { token, user: mapAuthUser(user) }
 }
 
 export async function register(
@@ -145,7 +155,7 @@ export async function register(
   if (data.refresh_token) {
     localStorage.setItem('refresh_token', data.refresh_token)
   }
-  return { token, user }
+  return { token, user: mapAuthUser(user) }
 }
 
 // NOTE: JWT stored in localStorage is XSS-vulnerable.
@@ -445,6 +455,19 @@ export async function resolveComment(commentId: string): Promise<any> {
 
 export async function promoteDraft(draftId: string): Promise<DocumentResponse> {
   const response = await apiClient.post<DocumentResponse>(`/drafts/${draftId}/promote`)
+  return response.data
+}
+
+export interface DraftStatusResponse {
+  id: string
+  title: string
+  status: string // generating | completed | failed | promoted
+  content: Record<string, unknown> | null
+  progress?: { total_sections?: number; completed_sections?: number }
+}
+
+export async function getDraft(draftId: string): Promise<DraftStatusResponse> {
+  const response = await apiClient.get<DraftStatusResponse>(`/drafts/${draftId}`)
   return response.data
 }
 

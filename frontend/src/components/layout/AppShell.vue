@@ -45,7 +45,9 @@ import UserMenu from './UserMenu.vue'
         </div>
       </div>
     </header>
-    <main id="main-content" class="flex-1 overflow-hidden">
+    <!-- flex flex-col min-h-0 establishes a bounded-height flex context so views
+         using flex-1/min-h-0 (e.g. the chat) actually scroll instead of growing. -->
+    <main id="main-content" class="flex-1 min-h-0 overflow-hidden flex flex-col">
       <slot />
     </main>
   </div>

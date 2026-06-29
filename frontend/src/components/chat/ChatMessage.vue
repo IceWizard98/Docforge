@@ -6,6 +6,15 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import PatchReviewCard from './PatchReviewCard.vue'
 
+// Markdown comes from the (untrusted) LLM/source corpus. Force every link to
+// open safely: noopener/noreferrer prevents reverse-tabnabbing via window.opener.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
+
 const props = defineProps<{
   message: ChatMessageResponse
 }>()
@@ -18,7 +27,7 @@ const emit = defineEmits<{
 const isUser = computed(() => props.message.role === 'user')
 // Result actions already applied automatically by ChatDock.handleAssistantResponse —
 // must NOT also be rendered as clickable buttons (would double-apply).
-const AUTO_APPLIED = ['draft_ready', 'section_created', 'clause_inserted', 'section_rewritten']
+const AUTO_APPLIED = ['draft_ready', 'draft_generating', 'section_created', 'clause_inserted', 'section_rewritten']
 // Surgical patch proposals get a granular review card; everything else is a button.
 const patchActions = computed(
   () => (props.message.actions || []).filter((a) => a.action === 'patches_proposed'),

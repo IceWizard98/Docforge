@@ -1,0 +1,32 @@
+{
+  "sourceStatus": {
+    "indexed": "Indexed",
+    "indexing": "Indexing…",
+    "failed": "Error",
+    "queued": "Queued"
+  },
+  "docType": {
+    "contract": "Contract",
+    "nda": "NDA",
+    "company_profile": "Company profile",
+    "service_sheet": "Service sheet",
+    "technical_doc": "Technical document",
+    "other": "Other"
+  },
+  "sources": {
+    "title": "Source library",
+    "upload": "Upload source",
+    "uploading": "Uploading…",
+    "empty": "No sources uploaded",
+    "download": "Download original",
+    "delete": "Delete"
+  },
+  "settings": {
+    "language": "Language",
+    "languageHint": "Interface language"
+  },
+  "language": {
+    "it": "Italian",
+    "en": "English"
+  }
+}

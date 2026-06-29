@@ -1,0 +1,32 @@
+{
+  "sourceStatus": {
+    "indexed": "Indicizzato",
+    "indexing": "Indicizzazione…",
+    "failed": "Errore",
+    "queued": "In coda"
+  },
+  "docType": {
+    "contract": "Contratto",
+    "nda": "NDA",
+    "company_profile": "Profilo aziendale",
+    "service_sheet": "Scheda servizio",
+    "technical_doc": "Documento tecnico",
+    "other": "Altro"
+  },
+  "sources": {
+    "title": "Libreria fonti",
+    "upload": "Carica fonte",
+    "uploading": "Caricamento…",
+    "empty": "Nessuna fonte caricata",
+    "download": "Scarica originale",
+    "delete": "Elimina"
+  },
+  "settings": {
+    "language": "Lingua",
+    "languageHint": "Lingua dell'interfaccia"
+  },
+  "language": {
+    "it": "Italiano",
+    "en": "Inglese"
+  }
+}

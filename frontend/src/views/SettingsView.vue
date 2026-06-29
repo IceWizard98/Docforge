@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/api/authStore'
 import { useThemeStore, type Theme } from '@/stores/themeStore'
+import { setLocale, SUPPORTED_LOCALES, type AppLocale } from '@/i18n'
 import { Save, Lock, Sun, Moon, Monitor } from '@lucide/vue'
 
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
+const { t, locale } = useI18n({ useScope: 'global' })
 const displayName = ref(authStore.currentUser?.displayName || '')
 const email = ref(authStore.currentUser?.email || '')
 const saved = ref(false)
@@ -85,6 +88,26 @@ function handleSave() {
             >
               <component :is="mode.icon" class="w-5 h-5 mx-auto mb-1" />
               {{ mode.label }}
+            </button>
+          </div>
+        </div>
+
+        <hr class="border-primary/10" />
+
+        <!-- Lingua -->
+        <div>
+          <h2 class="text-sm font-medium text-foreground mb-3">{{ t('settings.language') }}</h2>
+          <div class="flex gap-3">
+            <button
+              v-for="loc in SUPPORTED_LOCALES"
+              :key="loc"
+              @click="setLocale(loc as AppLocale)"
+              class="flex-1 px-4 py-3 rounded-lg border text-sm text-center transition-all cursor-pointer"
+              :class="locale === loc
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-primary/10 text-foreground/70 hover:border-primary/30 hover:bg-primary/5'"
+            >
+              {{ t(`language.${loc}`) }}
             </button>
           </div>
         </div>

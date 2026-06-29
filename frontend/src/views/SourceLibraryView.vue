@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { BookOpen, FileText, UploadCloud, Download, Trash2, RefreshCw } from '@lucide/vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -10,8 +11,11 @@ import { listAllSources,
   deleteSource,
   type SourceDocumentResponse, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
+import { useDocTypeLabel } from '@/composables/useDocTypeLabel'
 
 const { success, error: toastError } = useToast()
+const { t } = useI18n({ useScope: 'global' })
+const docTypeLabel = useDocTypeLabel()
 
 const sources = ref<SourceDocumentResponse[]>([])
 const loading = ref(true)
@@ -31,13 +35,13 @@ function extractError(e: any): string {
 function statusLabel(status?: string): { text: string; cls: string } {
   switch (status) {
     case 'indexed':
-      return { text: 'Indicizzato', cls: 'bg-primary/10 text-primary' }
+      return { text: t('sourceStatus.indexed'), cls: 'bg-primary/10 text-primary' }
     case 'indexing':
-      return { text: 'Indicizzazione…', cls: 'bg-warning/15 text-warning' }
+      return { text: t('sourceStatus.indexing'), cls: 'bg-warning/15 text-warning' }
     case 'failed':
-      return { text: 'Errore', cls: 'bg-danger/15 text-danger' }
+      return { text: t('sourceStatus.failed'), cls: 'bg-danger/15 text-danger' }
     default:
-      return { text: 'In coda', cls: 'bg-secondary/10 text-secondary' }
+      return { text: t('sourceStatus.queued'), cls: 'bg-secondary/10 text-secondary' }
   }
 }
 
@@ -171,6 +175,9 @@ onUnmounted(() => {
       :icon="FileText"
       title="Nessuna fonte caricata"
       description="Carica PDF, DOCX, TXT o Markdown per costruire la tua base di conoscenza"
+      action-label="Carica fonte"
+      :action-disabled="uploading"
+      @action="triggerUpload"
     />
 
     <div v-else class="space-y-2">
@@ -184,7 +191,7 @@ onUnmounted(() => {
           <div class="min-w-0 flex-1">
             <div class="text-sm font-medium text-foreground truncate">{{ source.filename }}</div>
             <div class="text-xs text-foreground/50 flex items-center gap-2 mt-0.5">
-              <span class="uppercase">{{ source.doc_type || 'N/A' }}</span>
+              <span>{{ docTypeLabel(source.doc_type) }}</span>
               <span v-if="source.language">· {{ source.language }}</span>
               <span>· {{ formatDate(source.created_at) }}</span>
             </div>

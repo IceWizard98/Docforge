@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onMounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Send, Bot, Loader2, Paperclip, Plus, ChevronDown, Pencil, Trash2, ArrowUp, FileText, Upload } from '@lucide/vue'
 import ChatMessage from './ChatMessage.vue'
@@ -9,7 +9,7 @@ import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { useEditorContext } from '@/composables/useEditorContext'
 import { useChatStore } from '@/stores/chatStore'
 import { useDocumentStore } from '@/stores/documentStore'
-import { promoteDraft, extractApiError } from '@/api/client'
+import { promoteDraft, getDraft, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 import type { ChatActionPayload, SourceRef, ChatMessageResponse } from '@/types/document'
 import type { Editor } from '@tiptap/core'
@@ -186,6 +186,82 @@ async function handlePromote() {
 // editor immediately so the document reflects the change without a manual click.
 const AUTO_APPLY_ACTIONS = ['draft_ready', 'section_created', 'clause_inserted', 'section_rewritten']
 
+// Async draft generation (local-first): the worker builds the document
+// section-by-section; we poll until it's ready, then open it in the editor.
+let draftPollTimer: ReturnType<typeof setInterval> | null = null
+let activeDraftId: string | null = null // also a cancel token for in-flight polls
+const DRAFT_POLL_MS = 3000
+// Hard ceiling for a genuinely stuck worker. The counter is RESET whenever a
+// section completes, so a slow-but-progressing draft is never killed.
+const DRAFT_POLL_MAX_ATTEMPTS = 300 // ~15 min of NO progress
+
+function stopDraftPolling() {
+  if (draftPollTimer) { clearInterval(draftPollTimer); draftPollTimer = null }
+  activeDraftId = null
+}
+
+function startDraftPolling(draftId: string, title?: string) {
+  stopDraftPolling()
+  activeDraftId = draftId
+  // Bind the completion to the document open NOW: an in-flight poll that resolves
+  // after the user switched docs must NOT overwrite the new document.
+  const targetDocId = props.documentId
+  let attempts = 0
+  let lastCompleted = -1
+  // Keep a reference to the spinner message so we can update it in place with
+  // live progress instead of spamming new bubbles (pushMessage keeps the ref).
+  const docLabel = title || 'il documento'
+  const genMsg = {
+    id: `gen_${Date.now()}`,
+    role: 'assistant',
+    content: `⏳ Sto generando **${docLabel}**…`,
+    created_at: new Date().toISOString(),
+  } as ChatMessageResponse
+  chatStore.pushMessage(genMsg)
+
+  draftPollTimer = setInterval(async () => {
+    if (activeDraftId !== draftId) return
+    if (++attempts > DRAFT_POLL_MAX_ATTEMPTS) {
+      stopDraftPolling()
+      genMsg.content = 'La generazione sta impiegando troppo tempo. Riprova più tardi.'
+      return
+    }
+    try {
+      const d = await getDraft(draftId)
+      if (activeDraftId !== draftId) return // cancelled/superseded while awaiting
+      const prog = (d.progress || {}) as { total_sections?: number; completed_sections?: number }
+      const completed = prog.completed_sections ?? 0
+      const total = prog.total_sections ?? 0
+      if (completed !== lastCompleted) {
+        lastCompleted = completed
+        attempts = 0 // progressing → never time out
+        if (d.status === 'generating' && total > 0) {
+          genMsg.content = `⏳ Sto generando **${docLabel}** … (sezione ${completed}/${total})`
+        }
+      }
+      if (d.status === 'completed') {
+        stopDraftPolling()
+        if (d.content && props.documentId === targetDocId) {
+          documentStore.setContent(d.content)
+          documentStore.saveContent(d.content)
+        }
+        chatStore.setCurrentDraftId(draftId)
+        genMsg.content = `**${d.title || docLabel}** generato e aperto nell'editor.`
+      } else if (d.status !== 'generating') {
+        // any terminal status (failed/promoted/unknown) stops polling
+        stopDraftPolling()
+        genMsg.content = d.status === 'failed'
+          ? 'La generazione del documento è fallita. Riprova.'
+          : genMsg.content
+      }
+    } catch {
+      // transient errors: keep polling (the row may not be committed yet)
+    }
+  }, DRAFT_POLL_MS)
+}
+
+onUnmounted(stopDraftPolling)
+
 function handleAssistantResponse(response: ChatMessageResponse | null) {
   if (response?.role === 'assistant') {
     chatStore.pushMessage({
@@ -204,6 +280,9 @@ function handleAssistantResponse(response: ChatMessageResponse | null) {
         if (action.action === 'draft_ready' && action.payload?.draft_id) {
           chatStore.setCurrentDraftId(action.payload.draft_id as string)
         }
+      }
+      if (action.action === 'draft_generating' && action.payload?.draft_id) {
+        startDraftPolling(action.payload.draft_id as string, action.payload?.title as string)
       }
     }
   }
