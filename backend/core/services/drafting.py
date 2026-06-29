@@ -65,10 +65,47 @@ REGOLE (vincolanti):
   autoritativi: scrivili nel testo. Usa anche il contesto sorgente dove pertinente.
 - Sintetizza e RIFORMULA con parole tue le informazioni del contesto: NON copiare
   frasi o periodi alla lettera dalle fonti.
+- I documenti sorgente servono SOLO come riferimento di stile e struttura: NON
+  copiarne nomi, parti, ragioni sociali, importi, date o luoghi. Per le parti, gli
+  importi, le date e i luoghi usa ESCLUSIVAMENTE i dati della richiesta dell'utente.
 - NON ripetere argomenti già trattati nelle sezioni precedenti elencate sopra.
+- NON rifiutare e NON dichiarare di non poter svolgere il compito o di non poter
+  consultare i file/documenti: redigi SEMPRE la sezione usando la richiesta
+  dell'utente e la tua competenza giuridica generale, anche se il contesto
+  sorgente è assente o scarso.
 - NON inventare fatti che non sono né nella richiesta utente né nel contesto: per
   un dato realmente mancante usa un segnaposto esplicito tra parentesi quadre,
   es. [DA COMPLETARE: ...]. Il testo non deve mai essere vuoto."""
+
+# Substrings that mark an LLM refusal/moralizing reply instead of section prose.
+# Weak local models sometimes emit "Non posso accedere ai file…" on sparse
+# context; such a reply must never reach the document.
+_REFUSAL_MARKERS = (
+    "non posso accedere",
+    "non posso generare",
+    "non sono in grado",
+    "non riesco ad accedere",
+    "non posso fornire",
+    "siamo qui per discuterne",
+    "as an ai",
+    "i cannot",
+    "i can't",
+    "i'm unable",
+    "i am unable",
+)
+
+# Appended to the prompt on a retry after a refusal, to force compliance.
+_SECTION_RETRY_OVERRIDE = (
+    "\n\nIMPORTANTE: scrivi ORA il testo della sezione. NON rispondere che non "
+    "puoi farlo o che non hai accesso ai file/documenti: usa i dati della "
+    "richiesta dell'utente e, per i dati mancanti, [DA COMPLETARE: ...]."
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """True when the model declined/moralized instead of writing the section."""
+    low = (text or "").lower()
+    return any(m in low for m in _REFUSAL_MARKERS)
 
 
 def _format_previous_sections(previous_sections: list[dict] | None) -> str:
@@ -100,6 +137,35 @@ def _pack_chunk_ids(pack) -> list[str]:
     except AttributeError:
         pass
     return ids
+
+
+def _outline_from_slot_schema(doc_type: str) -> list[dict]:
+    """Deterministic section outline from the slot schema of a known doc_type.
+
+    Far more reliable than asking a weak local model to invent an outline (which
+    produced generic English "Introduction/Main Content" sections unrelated to the
+    requested document). Each slot becomes a section titled with the slot label
+    and carrying the slot's retrieval hint for grounded per-section search.
+    Returns [] for unknown / "other" types so the caller falls back to the LLM /
+    default outline.
+    """
+    from core.doc_types import normalize as _normalize_doc_type
+    from core.services.slot_schema import get_slot_schema_service
+
+    canonical = _normalize_doc_type(doc_type)
+    if canonical == "other":
+        return []
+    schema = get_slot_schema_service().get(canonical)
+    if schema is None or not schema.slots:
+        return []
+    return [
+        {
+            "section_id": f"sec_{slot.id}",
+            "title": slot.label,
+            "query_hint": slot.retrieval_query_hint or slot.label,
+        }
+        for slot in schema.slots
+    ]
 
 
 def _normalize_sections(raw: object) -> list[dict]:
@@ -134,11 +200,38 @@ class DraftService:
         self._context_service = context_service
 
     async def generate_spec(
-        self, chat_session_id: str, messages: list[dict], llm: LLMProvider | None = None
+        self,
+        chat_session_id: str,
+        messages: list[dict],
+        llm: LLMProvider | None = None,
+        doc_type: str = "",
     ) -> dict:
+        last_message = messages[-1]["content"] if messages else ""
+
+        # Prefer a deterministic, type-correct outline from the slot schema; a weak
+        # local model asked to invent the outline produced generic English
+        # "Main Content" sections that had nothing to do with the requested doc.
+        slot_sections = _outline_from_slot_schema(doc_type)
+        if slot_sections:
+            from core.doc_types import normalize as _normalize_doc_type
+
+            return {
+                "draft_id": f"draft_{uuid4().hex[:8]}",
+                "chat_session_id": chat_session_id,
+                # Empty -> the worker keeps the chat-provided title.
+                "title": "",
+                "sections": slot_sections,
+                "brief": last_message or "",
+                "doc_type": _normalize_doc_type(doc_type),
+                "metadata": {
+                    "source": "slot_schema",
+                    "message_count": len(messages),
+                    "intent": last_message[:200] if last_message else "",
+                },
+            }
+
         provider = llm or self._llm
         if provider:
-            last_message = messages[-1]["content"] if messages else ""
             prompt = SPEC_PROMPT_TEMPLATE.format(
                 messages=last_message[:3000] if last_message else "(no messages)"
             )
@@ -207,11 +300,15 @@ class DraftService:
             context_pack = ContextPack()
 
         if ctx_svc is not None and not self._has_context(context_pack):
-            # Pass session_history so chunks already consumed by earlier sections
-            # are deduplicated — otherwise every section repeats the same source.
+            # Retrieve with the slot's query hint when present (e.g. "parti,
+            # ragione sociale, sede legale") — far more targeted than the bare
+            # section title, so each section pulls its own relevant chunks instead
+            # of the same generic top-k. Pass session_history so chunks already
+            # consumed by earlier sections are deduplicated.
+            retrieval_query = section.get("query_hint") or section.get("title", "")
             context_pack = await ctx_svc.build_section_context(
                 document_id=spec.get("document_id", ""),
-                section_title=section.get("title", ""),
+                section_title=retrieval_query,
                 section_id=section_id,
                 session_history=session_history,
             )
@@ -226,7 +323,11 @@ class DraftService:
                 section_id=section_id,
                 brief=spec.get("brief", "") or "(nessuna richiesta specifica)",
                 previous_sections=_format_previous_sections(previous_sections),
-                context_pack=context_text or "(no context available)",
+                context_pack=context_text
+                or (
+                    "(Nessun documento sorgente disponibile: redigi la sezione "
+                    "dalla richiesta dell'utente e dalla tua competenza generale.)"
+                ),
             )
             try:
                 # Plain text: the whole response is the section body. Provenance is
@@ -234,6 +335,16 @@ class DraftService:
                 # mapped to a single run — sourced if grounded, placeholder if not.
                 response = await provider.generate(prompt)
                 content = (response or "").strip()
+                if not content or _looks_like_refusal(content):
+                    # The model refused or returned nothing. Retry once with an
+                    # explicit override; if it still refuses, emit a placeholder
+                    # so a refusal sentence never lands in the document.
+                    retry_resp = await provider.generate(prompt + _SECTION_RETRY_OVERRIDE)
+                    retry = (retry_resp or "").strip()
+                    if retry and not _looks_like_refusal(retry):
+                        content = retry
+                    else:
+                        content = f"[DA COMPLETARE: {section.get('title', '')}]".strip()
                 provenance = self._build_provenance([], context_pack)
                 runs = self._build_runs({}, content, provenance)
                 return {

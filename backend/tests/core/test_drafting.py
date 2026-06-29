@@ -5,6 +5,7 @@ import pytest
 from core.services.context import ContextChunk, ContextPack, ContextPackService, ContextSource
 from core.services.drafting import (
     DraftService,
+    _looks_like_refusal,
     _normalize_sections,
     assemble_draft_content,
     build_section_node,
@@ -30,6 +31,20 @@ class TestNormalizeSections:
         assert _normalize_sections(None) == []
         assert _normalize_sections("nope") == []
         assert _normalize_sections({}) == []
+
+
+class TestRefusalDetection:
+    def test_detects_italian_and_english_refusals(self):
+        assert _looks_like_refusal(
+            "Non posso accedere al contenuto dei file sorgente forniti"
+        )
+        assert _looks_like_refusal("I cannot generate that content")
+        assert _looks_like_refusal("Mi dispiace, non sono in grado di farlo")
+
+    def test_real_prose_is_not_a_refusal(self):
+        assert not _looks_like_refusal(
+            "Il presente contratto disciplina la consulenza tra le parti."
+        )
 
 
 class TestDraftAssembly:
@@ -139,6 +154,53 @@ class TestDraftService:
     async def test_compose_context_pack_empty(self):
         pack = await self.service.compose_context_pack("doc_1", "sec_1", [])
         assert len(pack.sources) == 0
+
+    @pytest.mark.asyncio
+    async def test_generate_spec_uses_slot_schema_outline_for_known_doc_type(self):
+        # A known doc_type must yield a deterministic, Italian, type-correct
+        # outline from the slot schema — NOT a weak-model invention (which
+        # produced generic English "Main Content" sections).
+        spec = await self.service.generate_spec(
+            "chat_1", [{"role": "user", "content": "contratto di consulenza"}],
+            doc_type="contract",
+        )
+        titles = [s["title"] for s in spec["sections"]]
+        assert "Parti" in titles
+        assert "Oggetto" in titles
+        # Each section carries the slot retrieval hint for grounded search.
+        assert any(s.get("query_hint") for s in spec["sections"])
+
+    @pytest.mark.asyncio
+    async def test_generate_spec_other_doc_type_falls_back_to_default(self):
+        spec = await self.service.generate_spec("chat_1", [], doc_type="other")
+        assert len(spec["sections"]) >= 1
+        assert all(s.get("title") for s in spec["sections"])
+
+    @pytest.mark.asyncio
+    async def test_generate_section_uses_query_hint_for_retrieval(self):
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "txt"
+        mock_svc = AsyncMock()
+        mock_svc.build_section_context.return_value = self._make_context([{"text": "t"}])
+        service = DraftService(llm=mock_llm, context_service=mock_svc)
+        section = {
+            "section_id": "sec_parties", "title": "Parti",
+            "query_hint": "parti, ragione sociale, sede legale",
+        }
+        await service.generate_section({"title": "T"}, section, context_pack=None)
+        _, kwargs = mock_svc.build_section_context.call_args
+        assert "ragione sociale" in kwargs.get("section_title", "")
+
+    @pytest.mark.asyncio
+    async def test_generate_section_prompt_forbids_copying_source_entities(self):
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = lambda prompt, *a, **k: prompt
+        self.service._llm = mock_llm
+        context = self._make_context([{"text": "legal"}])
+        result = await self.service.generate_section(
+            {"title": "T", "brief": "b"}, {"section_id": "s", "title": "Parti"}, context
+        )
+        assert "SOLO come riferimento di stile" in result["content"]
 
     @pytest.mark.asyncio
     async def test_generate_spec_with_llm_provider(self):
@@ -369,6 +431,54 @@ class TestDraftService:
         )
         assert "Premesse" in result["content"]
         assert "RIFORMULA" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_generate_section_retries_on_refusal(self):
+        # Weak local models sometimes refuse ("Non posso accedere ai file…")
+        # instead of writing. A refusal must trigger ONE retry; the usable retry
+        # text replaces it so no refusal sentence reaches the document.
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = [
+            "Non posso accedere al contenuto dei file sorgente forniti.",
+            "Il presente contratto disciplina la consulenza tra le parti.",
+        ]
+        self.service._llm = mock_llm
+        spec = {"title": "Contratto", "brief": "x"}
+        section = {"section_id": "s0", "title": "Introduction"}
+        context = self._make_context([{"text": "t"}])
+        result = await self.service.generate_section(spec, section, context)
+        assert "Il presente contratto" in result["content"]
+        assert not _looks_like_refusal(result["content"])
+        assert mock_llm.generate.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_generate_section_double_refusal_yields_placeholder(self):
+        # If even the retry refuses, emit an explicit [DA COMPLETARE] placeholder
+        # rather than leaking a refusal sentence into the document.
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = [
+            "Non posso accedere ai file sorgente.",
+            "Mi dispiace, non sono in grado di farlo.",
+        ]
+        self.service._llm = mock_llm
+        spec = {"title": "Contratto", "brief": "x"}
+        section = {"section_id": "s0", "title": "Introduction"}
+        context = self._make_context([{"text": "t"}])
+        result = await self.service.generate_section(spec, section, context)
+        assert not _looks_like_refusal(result["content"])
+        assert "DA COMPLETARE" in result["content"]
+        assert mock_llm.generate.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_generate_section_prompt_forbids_refusal(self):
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = lambda prompt, *a, **k: prompt
+        self.service._llm = mock_llm
+        spec = {"title": "T", "brief": "b"}
+        section = {"section_id": "s0", "title": "Premesse"}
+        context = self._make_context([{"text": "legal"}])
+        result = await self.service.generate_section(spec, section, context)
+        assert "NON rifiutare" in result["content"]
 
     @pytest.mark.asyncio
     async def test_generate_section_returns_context_chunk_ids(self):

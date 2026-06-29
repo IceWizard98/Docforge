@@ -44,8 +44,15 @@ def generate_draft_task(  # noqa: PLR0915
             async with worker_engine() as session_factory:
                 provider = get_llm_provider()
 
+                # Read the chat-captured doc_type so the outline can come from the
+                # slot schema (deterministic, type-correct) instead of a weak
+                # model's generic invention.
+                async with session_factory() as session:
+                    seed = await session.get(DraftModel, UUID(draft_id))
+                    seed_doc_type = (seed.spec or {}).get("doc_type", "") if seed else ""
+
                 spec = await DraftService(llm=provider).generate_spec(
-                    chat_session_id, messages, llm=provider
+                    chat_session_id, messages, llm=provider, doc_type=seed_doc_type
                 )
                 sections = spec.get("sections", [])
                 total = len(sections)
