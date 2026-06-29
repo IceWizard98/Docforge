@@ -177,6 +177,41 @@ class TestDraftService:
         assert all(s.get("title") for s in spec["sections"])
 
     @pytest.mark.asyncio
+    async def test_generate_section_ungrounded_skips_corpus(self):
+        # Brief-driven mode (ground=False): never touch the corpus, so an
+        # unrelated source document can't contaminate the section. Content from
+        # the brief is a plain run (no placeholder/provenance marks).
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "Le parti sono Luis e Athenor Srl."
+        mock_svc = AsyncMock()
+        service = DraftService(llm=mock_llm, context_service=mock_svc)
+        spec = {"title": "T", "brief": "Luis e Athenor Srl, 61k, 1 anno"}
+        section = {"section_id": "s", "title": "Parti"}
+        result = await service.generate_section(
+            spec, section, context_pack=None, ground=False
+        )
+        mock_svc.build_section_context.assert_not_awaited()
+        assert result["content"] == "Le parti sono Luis e Athenor Srl."
+        assert result["provenance"] == []
+        assert result["context_chunk_ids"] == []
+        assert result["runs"][0]["placeholder"] is None
+        assert result["runs"][0]["provenance"] is None
+        assert result["placeholders"] == []
+
+    @pytest.mark.asyncio
+    async def test_generate_spec_brief_aggregates_user_messages(self):
+        # Terms are often stated across turns; the brief must aggregate ALL user
+        # messages, not just the last, or the section model lacks the real data.
+        messages = [
+            {"role": "user", "content": "Contratto tra Luis e Athenor Srl"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "61.000 euro, durata un anno"},
+        ]
+        spec = await self.service.generate_spec("chat_1", messages, doc_type="contract")
+        assert "Athenor" in spec["brief"]
+        assert "61.000" in spec["brief"]
+
+    @pytest.mark.asyncio
     async def test_generate_section_uses_query_hint_for_retrieval(self):
         mock_llm = AsyncMock()
         mock_llm.generate.return_value = "txt"

@@ -207,6 +207,16 @@ class DraftService:
         doc_type: str = "",
     ) -> dict:
         last_message = messages[-1]["content"] if messages else ""
+        # Aggregate ALL user messages as the brief: terms (parties, amount,
+        # duration) are often stated across several turns, and using only the last
+        # message leaves the section model without the real data — it then leans
+        # on (and copies) whatever context it's given.
+        user_msgs = [
+            str(m.get("content", "")).strip()
+            for m in messages
+            if isinstance(m, dict) and m.get("role") == "user" and m.get("content")
+        ]
+        brief = "\n\n".join(user_msgs).strip() or last_message
 
         # Prefer a deterministic, type-correct outline from the slot schema; a weak
         # local model asked to invent the outline produced generic English
@@ -221,7 +231,7 @@ class DraftService:
                 # Empty -> the worker keeps the chat-provided title.
                 "title": "",
                 "sections": slot_sections,
-                "brief": last_message or "",
+                "brief": brief,
                 "doc_type": _normalize_doc_type(doc_type),
                 "metadata": {
                     "source": "slot_schema",
@@ -245,7 +255,7 @@ class DraftService:
                         "title": result.get("title", f"Draft from chat {chat_session_id[:8]}"),
                         "sections": sections,
                         # Full user request — authoritative input for section content.
-                        "brief": last_message or "",
+                        "brief": brief,
                         "metadata": {
                             "source": "chat",
                             "message_count": len(messages),
@@ -271,7 +281,7 @@ class DraftService:
             "sections": [
                 {"section_id": f"sec_{uuid4().hex[:8]}", "title": t} for t in default_titles
             ],
-            "brief": last_message or "",
+            "brief": brief,
             "metadata": {
                 "source": "chat",
                 "message_count": len(messages),
@@ -289,6 +299,7 @@ class DraftService:
         context_service: object | None = None,
         session_history: list[dict] | None = None,
         previous_sections: list[dict] | None = None,
+        ground: bool = True,
     ) -> dict:
         provider = llm or self._llm
         ctx_svc = context_service or self._context_service
@@ -299,7 +310,11 @@ class DraftService:
 
             context_pack = ContextPack()
 
-        if ctx_svc is not None and not self._has_context(context_pack):
+        # Brief-driven mode (ground=False): never touch the corpus. The corpus is
+        # the user's OTHER documents; injecting them makes weak models copy their
+        # parties/amounts/dates into the new document. With grounding off the
+        # section is written purely from the brief.
+        if ground and ctx_svc is not None and not self._has_context(context_pack):
             # Retrieve with the slot's query hint when present (e.g. "parti,
             # ragione sociale, sede legale") — far more targeted than the bare
             # section title, so each section pulls its own relevant chunks instead
@@ -316,7 +331,9 @@ class DraftService:
         chunk_ids = _pack_chunk_ids(context_pack)
 
         if provider:
-            context_text = self._format_context_pack(context_pack, ctx_svc)
+            # Ungrounded: never surface corpus text in the prompt, even if a pack
+            # was passed — the brief is the only source of facts.
+            context_text = self._format_context_pack(context_pack, ctx_svc) if ground else ""
             prompt = SECTION_PROMPT_TEMPLATE.format(
                 title=spec.get("title", ""),
                 section_title=section.get("title", ""),
@@ -345,8 +362,18 @@ class DraftService:
                         content = retry
                     else:
                         content = f"[DA COMPLETARE: {section.get('title', '')}]".strip()
-                provenance = self._build_provenance([], context_pack)
-                runs = self._build_runs({}, content, provenance)
+                if ground:
+                    provenance = self._build_provenance([], context_pack)
+                    runs = self._build_runs({}, content, provenance)
+                else:
+                    # Brief-driven content is authored, not corpus-sourced: a plain
+                    # run with no provenance and no placeholder mark.
+                    provenance = []
+                    runs = (
+                        [{"text": content, "provenance": None, "placeholder": None}]
+                        if content
+                        else []
+                    )
                 return {
                     "section_id": section_id,
                     "title": section.get("title", ""),
@@ -355,7 +382,7 @@ class DraftService:
                     "provenance": provenance,
                     "runs": runs,
                     "placeholders": [r["placeholder"] for r in runs if r["placeholder"]],
-                    "context_chunk_ids": chunk_ids,
+                    "context_chunk_ids": chunk_ids if ground else [],
                 }
             except Exception:
                 logger.exception(

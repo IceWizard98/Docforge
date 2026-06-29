@@ -1,10 +1,9 @@
-"""The draft worker must generate sections SEQUENTIALLY and accumulate context.
+"""The draft worker must generate sections SEQUENTIALLY, brief-driven.
 
-On a weak local model, generating all sections in parallel with the same
-retrieved chunks makes the model repeat the same source text across sections.
-Generating one section at a time and feeding each later section (a) the chunk
-ids already consumed (session_history) and (b) the sections already written
-(previous_sections) lets it dedup retrieval and avoid repetition.
+Drafting is brief-driven (ground=False): the corpus is NOT injected, so an
+unrelated source document can't contaminate the new document. Sections are still
+generated one at a time, each fed the already-written sections (previous_sections)
+so the model doesn't repeat itself.
 """
 
 import uuid
@@ -18,18 +17,16 @@ def _session_cm(session):
     return cm
 
 
-@patch("workers.drafting.PgvectorAdapter")
-@patch("workers.drafting.ContextPackService")
 @patch("workers.drafting.get_llm_provider")
 @patch("workers.drafting.DraftService")
 @patch("workers.drafting.worker_engine")
-def test_generate_draft_sequential_accumulates_context(
-    mock_worker_engine, mock_draft_service_cls, mock_get_llm, mock_ctx_cls, mock_pg_cls
+def test_generate_draft_sequential_brief_driven(
+    mock_worker_engine, mock_draft_service_cls, mock_get_llm
 ):
     from workers.drafting import generate_draft_task
 
     draft = MagicMock()
-    draft.spec = {}
+    draft.spec = {"doc_type": "contract"}
     draft.title = ""
 
     session = AsyncMock()
@@ -57,18 +54,17 @@ def test_generate_draft_sequential_accumulates_context(
 
     async def fake_generate_section(  # noqa: PLR0913
         spec, sec, context_pack=None, llm=None, context_service=None,
-        session_history=None, previous_sections=None,
+        session_history=None, previous_sections=None, ground=True,
     ):
         # Snapshot: the worker passes ONE list mutated in place across sections,
         # so we must freeze its state at call time, not hold a live reference.
         captured.append(
             {
                 "section_id": sec["section_id"],
-                "session_history": list(session_history or []),
+                "ground": ground,
                 "previous_sections": list(previous_sections or []),
             }
         )
-        cid = f"chk_{sec['section_id']}"
         return {
             "section_id": sec["section_id"],
             "title": sec["title"],
@@ -77,7 +73,7 @@ def test_generate_draft_sequential_accumulates_context(
             "provenance": [],
             "runs": [],
             "placeholders": [],
-            "context_chunk_ids": [cid],
+            "context_chunk_ids": [],
         }
 
     svc.generate_section = AsyncMock(side_effect=fake_generate_section)
@@ -85,21 +81,17 @@ def test_generate_draft_sequential_accumulates_context(
 
     generate_draft_task(str(uuid.uuid4()), "chat_1", [{"role": "user", "content": "hi"}])
 
-    # Both sections generated, in order.
+    # doc_type from the seed spec is forwarded to the outline builder.
+    _, kwargs = svc.generate_spec.call_args
+    assert kwargs.get("doc_type") == "contract"
+
+    # Both sections generated, in order, brief-driven (no corpus).
     assert [c["section_id"] for c in captured] == ["s0", "s1"]
+    assert all(c["ground"] is False for c in captured)
 
-    # Section 0 has no prior context.
-    assert not captured[0]["session_history"]
+    # Section 0 has no prior sections; section 1 sees section 0's title.
     assert not captured[0]["previous_sections"]
-
-    # Section 1 must SEE section 0's consumed chunk + its written content.
-    used_chunks = [
-        c
-        for entry in (captured[1]["session_history"] or [])
-        for c in entry.get("context_chunks", [])
-    ]
-    assert "chk_s0" in used_chunks
-    prev_titles = [p["title"] for p in (captured[1]["previous_sections"] or [])]
+    prev_titles = [p["title"] for p in captured[1]["previous_sections"]]
     assert "Premesse" in prev_titles
 
     # Draft persisted as completed.

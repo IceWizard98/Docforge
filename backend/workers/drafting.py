@@ -6,9 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from adapters.llm.factory import get_llm_provider
 from adapters.postgresql.models import DraftModel
-from adapters.postgresql.pgvector import PgvectorAdapter
 from core.events import DraftGenerated, SectionGenerated
-from core.services.context import ContextPackService
 from core.services.drafting import (
     DraftService,
     assemble_draft_content,
@@ -30,14 +28,12 @@ def generate_draft_task(  # noqa: PLR0915
 ) -> DraftGenerated:
     """Generate the full draft section-by-section and persist it to the DraftModel.
 
-    Sections are generated SEQUENTIALLY (not in parallel): each later section is
-    fed the chunk ids already consumed (``session_history``) so retrieval dedups
-    them, and the sections already written (``previous_sections``) so the model
-    doesn't repeat itself. On a weak local model, parallel generation with the
-    same retrieved chunks makes it copy the same source text into every section.
-    Each section runs on its own session (an ``AsyncSession`` is not safe to share
-    across coroutines); content carries provenance/placeholder marks and the spec
-    keeps per-section provenance for promote-time links.
+    Sections are generated SEQUENTIALLY and BRIEF-DRIVEN (ground=False): the
+    corpus is not injected, because it holds the user's OTHER documents and weak
+    models copy their parties/amounts/dates into the new one. Each later section
+    is fed the sections already written (``previous_sections``) so the model
+    doesn't repeat itself. The outline comes from the slot schema for the
+    chat-captured doc_type.
     """
     try:
         async def _run():
@@ -70,31 +66,21 @@ def generate_draft_task(  # noqa: PLR0915
                 # Show the real total up front.
                 await _set_progress(0)
 
-                # Accumulated across sections so each later one dedups already-used
-                # chunks and knows what's already been written (anti-repetition).
-                session_history: list[dict] = []
+                # Brief-driven: sections are written from the user's brief, NOT the
+                # corpus (which holds the user's OTHER documents and would
+                # contaminate the new one). Accumulate previous_sections so the
+                # model doesn't repeat itself across sections.
                 previous_sections: list[dict] = []
                 results: list[dict] = []
+                service = DraftService(llm=provider)
 
                 for done, sec in enumerate(sections, start=1):
-                    async with session_factory() as session:
-                        # No LLM reranker (llm_provider=None): on local models it
-                        # adds a slow, failure-prone LLM call per section; base
-                        # vector+fulltext scores are enough for grounding.
-                        ctx_svc = ContextPackService(
-                            pgvector=PgvectorAdapter(session), llm_provider=None
-                        )
-                        service = DraftService(llm=provider, context_service=ctx_svc)
-                        result = await service.generate_section(
-                            spec, sec, context_pack=None, llm=provider,
-                            context_service=ctx_svc,
-                            session_history=session_history,
-                            previous_sections=previous_sections,
-                        )
+                    result = await service.generate_section(
+                        spec, sec, context_pack=None, llm=provider,
+                        previous_sections=previous_sections,
+                        ground=False,
+                    )
                     results.append(result)
-                    chunk_ids = result.get("context_chunk_ids", [])
-                    if chunk_ids:
-                        session_history.append({"context_chunks": chunk_ids})
                     previous_sections.append({
                         "title": result.get("title", ""),
                         "content": result.get("content", ""),
@@ -173,18 +159,15 @@ def generate_section_task(
                     return
 
                 provider = get_llm_provider()
-                # No LLM reranker (consistent with generate_draft_task): slow and
-                # unreliable on local models; base RRF scores are enough.
-                ctx_svc = ContextPackService(
-                    pgvector=PgvectorAdapter(session), llm_provider=None
-                )
-                service = DraftService(llm=provider, context_service=ctx_svc)
+                # Brief-driven, consistent with generate_draft_task: no corpus
+                # injection (it would contaminate the regenerated section).
+                service = DraftService(llm=provider)
                 section = {
                     "section_id": section_id,
                     "title": spec_sections[idx].get("title", ""),
                 }
                 result = await service.generate_section(
-                    spec, section, context_pack=None, llm=provider, context_service=ctx_svc
+                    spec, section, context_pack=None, llm=provider, ground=False
                 )
                 # Keep the existing sectionId stable across regeneration.
                 result["section_id"] = section_id
