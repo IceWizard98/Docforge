@@ -334,6 +334,56 @@ class TestDraftService:
         assert result["section_id"] == "sec_1"
         assert result["content"] == ""
 
+    @pytest.mark.asyncio
+    async def test_generate_section_passes_session_history_to_context_service(self):
+        # Sequential pipeline: chunks already consumed by earlier sections are
+        # passed via session_history so build_section_context can dedup them and
+        # later sections don't re-pull (and re-emit) the same source text.
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "txt"
+        mock_svc = AsyncMock()
+        mock_svc.build_section_context.return_value = self._make_context([{"text": "t"}])
+        service = DraftService(llm=mock_llm, context_service=mock_svc)
+        spec = {"title": "T"}
+        section = {"section_id": "sec_1", "title": "Premesse"}
+        hist = [{"context_chunks": ["chk_old"]}]
+        await service.generate_section(
+            spec, section, context_pack=None, session_history=hist
+        )
+        _, kwargs = mock_svc.build_section_context.call_args
+        assert kwargs.get("session_history") == hist
+
+    @pytest.mark.asyncio
+    async def test_generate_section_injects_previous_sections_and_antiverbatim(self):
+        # The prompt must (a) list already-written sections so the model doesn't
+        # repeat them and (b) instruct synthesis instead of verbatim copying.
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = lambda prompt, *a, **k: prompt
+        self.service._llm = mock_llm
+        spec = {"title": "Contratto"}
+        section = {"section_id": "sec_2", "title": "Oggetto"}
+        context = self._make_context([{"text": "legal"}])
+        prev = [{"title": "Premesse", "content": "Le parti sono A e B."}]
+        result = await self.service.generate_section(
+            spec, section, context, previous_sections=prev
+        )
+        assert "Premesse" in result["content"]
+        assert "RIFORMULA" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_generate_section_returns_context_chunk_ids(self):
+        # The worker accumulates these into session_history for the next section.
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "txt"
+        self.service._llm = mock_llm
+        spec = {"title": "T"}
+        section = {"section_id": "sec_1", "title": "Premesse"}
+        context = self._make_context(
+            [{"chunk_id": "chk_1", "text": "a"}, {"chunk_id": "chk_2", "text": "b"}]
+        )
+        result = await self.service.generate_section(spec, section, context)
+        assert result["context_chunk_ids"] == ["chk_1", "chk_2"]
+
 
 class TestContextPackService:
     @pytest.mark.asyncio

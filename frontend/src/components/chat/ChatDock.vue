@@ -223,7 +223,9 @@ function startDraftPolling(draftId: string, title?: string) {
     if (activeDraftId !== draftId) return
     if (++attempts > DRAFT_POLL_MAX_ATTEMPTS) {
       stopDraftPolling()
-      genMsg.content = 'La generazione sta impiegando troppo tempo. Riprova più tardi.'
+      chatStore.updateMessageContent(
+        genMsg.id, 'La generazione sta impiegando troppo tempo. Riprova più tardi.',
+      )
       return
     }
     try {
@@ -236,7 +238,9 @@ function startDraftPolling(draftId: string, title?: string) {
         lastCompleted = completed
         attempts = 0 // progressing → never time out
         if (d.status === 'generating' && total > 0) {
-          genMsg.content = `⏳ Sto generando **${docLabel}** … (sezione ${completed}/${total})`
+          chatStore.updateMessageContent(
+            genMsg.id, `⏳ Sto generando **${docLabel}** … (sezione ${completed}/${total})`,
+          )
         }
       }
       if (d.status === 'completed') {
@@ -246,13 +250,17 @@ function startDraftPolling(draftId: string, title?: string) {
           documentStore.saveContent(d.content)
         }
         chatStore.setCurrentDraftId(draftId)
-        genMsg.content = `**${d.title || docLabel}** generato e aperto nell'editor.`
+        chatStore.updateMessageContent(
+          genMsg.id, `**${d.title || docLabel}** generato e aperto nell'editor.`,
+        )
       } else if (d.status !== 'generating') {
         // any terminal status (failed/promoted/unknown) stops polling
         stopDraftPolling()
-        genMsg.content = d.status === 'failed'
-          ? 'La generazione del documento è fallita. Riprova.'
-          : genMsg.content
+        if (d.status === 'failed') {
+          chatStore.updateMessageContent(
+            genMsg.id, 'La generazione del documento è fallita. Riprova.',
+          )
+        }
       }
     } catch {
       // transient errors: keep polling (the row may not be committed yet)

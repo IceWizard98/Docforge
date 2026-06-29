@@ -50,6 +50,10 @@ Richiesta dell'utente (AUTORITATIVA — questi dati sono VERI, usali e scrivili
 esplicitamente nel testo, NON come segnaposto):
 {brief}
 
+Sezioni già redatte (NON ripeterne il contenuto; questa sezione deve trattare
+SOLO il proprio argomento «{section_title}»):
+{previous_sections}
+
 Ecco il contesto dai documenti sorgente:
 {context_pack}
 
@@ -59,9 +63,43 @@ REGOLE (vincolanti):
 - Scrivi nella STESSA LINGUA della richiesta dell'utente qui sopra.
 - I dati forniti dall'utente (nomi, parti, importi, durate, date, modalità) sono
   autoritativi: scrivili nel testo. Usa anche il contesto sorgente dove pertinente.
+- Sintetizza e RIFORMULA con parole tue le informazioni del contesto: NON copiare
+  frasi o periodi alla lettera dalle fonti.
+- NON ripetere argomenti già trattati nelle sezioni precedenti elencate sopra.
 - NON inventare fatti che non sono né nella richiesta utente né nel contesto: per
   un dato realmente mancante usa un segnaposto esplicito tra parentesi quadre,
   es. [DA COMPLETARE: ...]. Il testo non deve mai essere vuoto."""
+
+
+def _format_previous_sections(previous_sections: list[dict] | None) -> str:
+    """Render already-written sections (title + short excerpt) for the prompt.
+
+    The model uses this to avoid repeating earlier content; an empty list yields
+    a sentinel so the prompt never carries a dangling placeholder.
+    """
+    if not previous_sections:
+        return "(nessuna — questa è la prima sezione)"
+    parts = []
+    for s in previous_sections:
+        if not isinstance(s, dict):
+            continue
+        title = str(s.get("title", "")).strip()
+        excerpt = " ".join(str(s.get("content", "")).split())[:300]
+        parts.append(f"- {title}: {excerpt}")
+    return "\n".join(parts) or "(nessuna — questa è la prima sezione)"
+
+
+def _pack_chunk_ids(pack) -> list[str]:
+    """All chunk ids in a context pack (for cross-section dedup)."""
+    ids: list[str] = []
+    try:
+        for source in pack.sources:
+            for chunk in source.chunks:
+                if chunk.chunk_id:
+                    ids.append(chunk.chunk_id)
+    except AttributeError:
+        pass
+    return ids
 
 
 def _normalize_sections(raw: object) -> list[dict]:
@@ -149,13 +187,15 @@ class DraftService:
         }
         return spec
 
-    async def generate_section(
+    async def generate_section(  # noqa: PLR0913
         self,
         spec: dict,
         section: dict,
         context_pack: object | None = None,
         llm: LLMProvider | None = None,
         context_service: object | None = None,
+        session_history: list[dict] | None = None,
+        previous_sections: list[dict] | None = None,
     ) -> dict:
         provider = llm or self._llm
         ctx_svc = context_service or self._context_service
@@ -167,11 +207,16 @@ class DraftService:
             context_pack = ContextPack()
 
         if ctx_svc is not None and not self._has_context(context_pack):
+            # Pass session_history so chunks already consumed by earlier sections
+            # are deduplicated — otherwise every section repeats the same source.
             context_pack = await ctx_svc.build_section_context(
                 document_id=spec.get("document_id", ""),
                 section_title=section.get("title", ""),
                 section_id=section_id,
+                session_history=session_history,
             )
+
+        chunk_ids = _pack_chunk_ids(context_pack)
 
         if provider:
             context_text = self._format_context_pack(context_pack, ctx_svc)
@@ -180,6 +225,7 @@ class DraftService:
                 section_title=section.get("title", ""),
                 section_id=section_id,
                 brief=spec.get("brief", "") or "(nessuna richiesta specifica)",
+                previous_sections=_format_previous_sections(previous_sections),
                 context_pack=context_text or "(no context available)",
             )
             try:
@@ -198,6 +244,7 @@ class DraftService:
                     "provenance": provenance,
                     "runs": runs,
                     "placeholders": [r["placeholder"] for r in runs if r["placeholder"]],
+                    "context_chunk_ids": chunk_ids,
                 }
             except Exception:
                 logger.exception(
@@ -205,6 +252,9 @@ class DraftService:
                     spec.get("draft_id", ""),
                     section_id,
                 )
+        # No content was produced (no provider, or the LLM call failed), so report
+        # NO consumed chunks: those chunks weren't used and must stay available to
+        # later sections instead of being withheld by the dedup.
         return {
             "section_id": section_id,
             "title": section.get("title", ""),
@@ -213,6 +263,7 @@ class DraftService:
             "provenance": self._build_provenance([], context_pack),
             "runs": [],
             "placeholders": [],
+            "context_chunk_ids": [],
         }
 
     async def compose_context_pack(

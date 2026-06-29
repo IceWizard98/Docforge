@@ -87,6 +87,15 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push(msg)
   }
 
+  // Update a message's content THROUGH the reactive array element (find returns
+  // the proxy), so the change is tracked. Mutating the original pushed object
+  // reference directly bypasses Vue's set-trap and won't re-render (the draft
+  // spinner stayed stuck "Sto generando…" because of exactly that).
+  function updateMessageContent(id: string, content: string) {
+    const m = messages.value.find(x => x.id === id)
+    if (m) m.content = content
+  }
+
   function setSources(sources: SourceRef[]) {
     currentSources.value = sources
   }
@@ -169,7 +178,7 @@ export const useChatStore = defineStore('chat', () => {
     sessionLoading, currentDraftId, promoting,
     hasActiveSession,
     loadSessions, selectSession, newSession, ensureSession,
-    pushMessage, setSources, setSending, setError, setCurrentDraftId,
+    pushMessage, updateMessageContent, setSources, setSending, setError, setCurrentDraftId,
     sendMessage, sendWithFiles, renameSession, deleteSession,
   }
 })

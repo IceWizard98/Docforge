@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task
-def generate_draft_task(
+def generate_draft_task(  # noqa: PLR0915
     draft_id: str,
     chat_session_id: str,
     messages: list[dict],
@@ -30,10 +30,13 @@ def generate_draft_task(
 ) -> DraftGenerated:
     """Generate the full draft section-by-section and persist it to the DraftModel.
 
-    Sections are independent, so they are generated concurrently — each on its
-    own session (an ``AsyncSession`` is not safe to share across concurrent
-    coroutines) sharing one engine pool. Each section is grounded via corpus
-    retrieval; content carries per-span provenance/placeholder marks and the spec
+    Sections are generated SEQUENTIALLY (not in parallel): each later section is
+    fed the chunk ids already consumed (``session_history``) so retrieval dedups
+    them, and the sections already written (``previous_sections``) so the model
+    doesn't repeat itself. On a weak local model, parallel generation with the
+    same retrieved chunks makes it copy the same source text into every section.
+    Each section runs on its own session (an ``AsyncSession`` is not safe to share
+    across coroutines); content carries provenance/placeholder marks and the spec
     keeps per-section provenance for promote-time links.
     """
     try:
@@ -60,11 +63,13 @@ def generate_draft_task(
                 # Show the real total up front.
                 await _set_progress(0)
 
-                done = 0
-                progress_lock = asyncio.Lock()
+                # Accumulated across sections so each later one dedups already-used
+                # chunks and knows what's already been written (anti-repetition).
+                session_history: list[dict] = []
+                previous_sections: list[dict] = []
+                results: list[dict] = []
 
-                async def _gen(sec: dict) -> dict:
-                    nonlocal done
+                for done, sec in enumerate(sections, start=1):
                     async with session_factory() as session:
                         # No LLM reranker (llm_provider=None): on local models it
                         # adds a slow, failure-prone LLM call per section; base
@@ -74,15 +79,20 @@ def generate_draft_task(
                         )
                         service = DraftService(llm=provider, context_service=ctx_svc)
                         result = await service.generate_section(
-                            spec, sec, context_pack=None, llm=provider, context_service=ctx_svc
+                            spec, sec, context_pack=None, llm=provider,
+                            context_service=ctx_svc,
+                            session_history=session_history,
+                            previous_sections=previous_sections,
                         )
-                    async with progress_lock:
-                        done += 1
-                        completed = done
-                    await _set_progress(completed)
-                    return result
-
-                results = await asyncio.gather(*(_gen(sec) for sec in sections))
+                    results.append(result)
+                    chunk_ids = result.get("context_chunk_ids", [])
+                    if chunk_ids:
+                        session_history.append({"context_chunks": chunk_ids})
+                    previous_sections.append({
+                        "title": result.get("title", ""),
+                        "content": result.get("content", ""),
+                    })
+                    await _set_progress(done)
 
                 async with session_factory() as session:
                     draft = await session.get(DraftModel, UUID(draft_id))
