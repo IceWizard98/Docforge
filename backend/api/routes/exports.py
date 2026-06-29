@@ -27,9 +27,13 @@ async def create_export(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    # Scope the lookup to the requesting user: a document the caller does not
+    # own must be indistinguishable from one that does not exist, otherwise any
+    # authenticated user could export (and download) another user's document.
     result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == doc_id,
+            DocumentModel.created_by == UUID(current_user.user_id),
         )
     )
     doc = result.scalar_one_or_none()
@@ -64,7 +68,7 @@ async def create_export(
 
     return ExportResponse(
         id=str(export_id),
-        document_id=doc_id,
+        document_id=str(doc_id),
         format=body.format,
         status="processing",
         file_key=None,

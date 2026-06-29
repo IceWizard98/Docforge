@@ -99,7 +99,10 @@ async def list_templates(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    query = select(TemplateModel)
+    # TemplateModel has no owner column (no `created_by`); the only access
+    # signal is `is_public`. Templates are a shared library, so listing is
+    # restricted to public templates — private ones are never leaked.
+    query = select(TemplateModel).where(TemplateModel.is_public.is_(True))
     if category:
         query = query.where(TemplateModel.category == category)
     if doc_type:
@@ -129,7 +132,11 @@ async def get_template(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    query = select(TemplateModel).where(TemplateModel.id == template_id)
+    # Only public templates are readable (no per-user ownership column exists).
+    query = select(TemplateModel).where(
+        TemplateModel.id == template_id,
+        TemplateModel.is_public.is_(True),
+    )
     result = await session.execute(query)
     model = result.scalar_one_or_none()
     if model is None:
@@ -154,38 +161,13 @@ async def update_template(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    result = await session.execute(
-        select(TemplateModel).where(
-            TemplateModel.id == template_id,
-        )
-    )
-    model = result.scalar_one_or_none()
-    if model is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
-
-    allowed = {"name", "description", "doc_type", "content", "category", "is_public"}
-    updates = body.model_dump(exclude_unset=True)
-    for field, value in updates.items():
-        if field in allowed:
-            setattr(model, field, value)
-
-    try:
-        await session.flush()
-    except SQLAlchemyError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Database constraint violation",
-        ) from exc
-
-    return TemplateDetailResponse(
-        id=model.id,
-        name=model.name,
-        description=model.description,
-        doc_type=model.doc_type,
-        category=model.category,
-        is_public=model.is_public,
-        created_at=_iso(model.created_at),
-        updated_at=_iso(model.updated_at),
-        content=model.content,
+    # SECURITY: templates are a shared library with no ownership column
+    # (`TemplateModel` has `is_public` but no `created_by`). Without a way to
+    # establish who owns a template, allowing any authenticated user to mutate
+    # any template is a cross-user authorization gap. Until an ownership column
+    # exists, mutation is forbidden outright rather than left open. (Templates
+    # can still be created via POST and read via GET when public.)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Not allowed",
     )

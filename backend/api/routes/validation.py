@@ -31,6 +31,7 @@ async def validate_document(
     result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == doc_id,
+            DocumentModel.created_by == UUID(current_user.user_id),
         )
     )
     doc = result.scalar_one_or_none()
@@ -98,6 +99,7 @@ async def get_validation(
     result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == doc_id,
+            DocumentModel.created_by == UUID(current_user.user_id),
         )
     )
     doc = result.scalar_one_or_none()

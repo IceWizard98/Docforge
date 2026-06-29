@@ -339,8 +339,14 @@ async def create_document(
 
     if body.template_id:
         from adapters.postgresql.models import TemplateModel
+        # Only seed from public templates. TemplateModel has no owner column,
+        # so "owned by the user" cannot be expressed; restrict to public to
+        # avoid leaking/seeding arbitrary template content into a new document.
         tpl_result = await session.execute(
-            select(TemplateModel).where(TemplateModel.id == body.template_id)
+            select(TemplateModel).where(
+                TemplateModel.id == body.template_id,
+                TemplateModel.is_public.is_(True),
+            )
         )
         template = tpl_result.scalar_one_or_none()
         if template is None:

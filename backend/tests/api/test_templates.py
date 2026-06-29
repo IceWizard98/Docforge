@@ -23,9 +23,13 @@ def _build_mock_template(overrides=None):
 
 
 class TestUpdateTemplate:
+    """Templates have no ownership column, so mutation is forbidden outright to
+    close the cross-user authorization gap (any authed user could edit any
+    template). Update must return 403 and never touch the row."""
+
     @pytest.mark.asyncio
-    async def test_update_success(self, async_client, mock_session, auth_headers):
-        """Update template name and description."""
+    async def test_update_forbidden(self, async_client, mock_session, auth_headers):
+        """403 for any update attempt — mutation is not allowed."""
         tpl = _build_mock_template()
         result = MagicMock()
         result.scalar_one_or_none.return_value = tpl
@@ -37,14 +41,16 @@ class TestUpdateTemplate:
             headers=auth_headers,
         )
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["name"] == "Updated Name"
-        assert data["description"] == "New description"
+        assert resp.status_code == 403
+        # The row must not have been mutated or flushed.
+        assert tpl.name == "Test Template"
+        mock_session.flush.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_update_not_found(self, async_client, mock_session, auth_headers):
-        """404 when template does not exist."""
+    async def test_update_forbidden_even_when_missing(
+        self, async_client, mock_session, auth_headers
+    ):
+        """403 (not 404) — mutation is rejected before any ownership check."""
         result = MagicMock()
         result.scalar_one_or_none.return_value = None
         mock_session.execute.return_value = result
@@ -55,50 +61,58 @@ class TestUpdateTemplate:
             headers=auth_headers,
         )
 
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
     @pytest.mark.asyncio
     async def test_update_unauthorized(self, async_client, mock_session):
-        """401 when no auth token."""
+        """401 when no auth token (auth runs before the 403 guard)."""
         resp = await async_client.patch(
             f"/api/v1/templates/{uuid.uuid4()}",
             json={"name": "X"},
         )
         assert resp.status_code == 401
 
+
+class TestGetTemplate:
     @pytest.mark.asyncio
-    async def test_update_partial(self, async_client, mock_session, auth_headers):
-        """Update only one field, others unchanged."""
-        tpl = _build_mock_template()
+    async def test_get_public_success(self, async_client, mock_session, auth_headers):
+        """Public template is readable."""
+        tpl = _build_mock_template({"is_public": True})
         result = MagicMock()
         result.scalar_one_or_none.return_value = tpl
         mock_session.execute.return_value = result
 
-        resp = await async_client.patch(
-            f"/api/v1/templates/{tpl.id}",
-            json={"category": "financial"},
-            headers=auth_headers,
+        resp = await async_client.get(
+            f"/api/v1/templates/{tpl.id}", headers=auth_headers
         )
 
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["category"] == "financial"
-        assert data["name"] == "Test Template"  # unchanged
+        assert resp.json()["id"] == str(tpl.id)
 
     @pytest.mark.asyncio
-    async def test_update_content(self, async_client, mock_session, auth_headers):
-        """Update template content."""
-        tpl = _build_mock_template()
+    async def test_get_private_not_found(self, async_client, mock_session, auth_headers):
+        """A non-public template is filtered out by the query -> 404."""
         result = MagicMock()
-        result.scalar_one_or_none.return_value = tpl
+        result.scalar_one_or_none.return_value = None
         mock_session.execute.return_value = result
-        new_content = {"type": "doc", "content": [{"type": "section"}]}
 
-        resp = await async_client.patch(
-            f"/api/v1/templates/{tpl.id}",
-            json={"content": new_content},
-            headers=auth_headers,
+        resp = await async_client.get(
+            f"/api/v1/templates/{uuid.uuid4()}", headers=auth_headers
         )
 
+        assert resp.status_code == 404
+
+
+class TestListTemplates:
+    @pytest.mark.asyncio
+    async def test_list_returns_public(self, async_client, mock_session, auth_headers):
+        """List returns the (public) templates the query yields."""
+        tpl = _build_mock_template({"is_public": True})
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [tpl]
+        mock_session.execute.return_value = result
+
+        resp = await async_client.get("/api/v1/templates", headers=auth_headers)
+
         assert resp.status_code == 200
-        assert tpl.content == new_content
+        assert len(resp.json()) == 1

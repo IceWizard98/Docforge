@@ -12,6 +12,8 @@ class RetrievalFilters:
     language: str | None = None
     chunk_type: str | None = None
     confidence_min: float | None = None
+    # Restrict retrieval to a single owner's sources (per-user corpus isolation).
+    owner_id: str | None = None
 
 
 @dataclass
@@ -125,7 +127,11 @@ class HybridSearchService:
             raw = await self.llm_provider.generate(prompt)
             resp = json.loads(raw)
             llm_scores = resp.get("scores") if isinstance(resp, dict) else None
-            if llm_scores and len(llm_scores) == len(top_n):
+            if (
+                llm_scores
+                and len(llm_scores) == len(top_n)
+                and all(isinstance(s, (int, float)) for s in llm_scores)
+            ):
                 max_llm = max(llm_scores) or 1
                 for i, r in enumerate(top_n):
                     normalized = llm_scores[i] / max_llm

@@ -63,6 +63,7 @@ class SourceDocumentModel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     filename = Column(String(500), nullable=False)
     doc_type = Column(String(64), nullable=False, default="")
     language = Column(String(8), nullable=True)

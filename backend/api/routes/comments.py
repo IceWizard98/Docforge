@@ -47,6 +47,7 @@ async def create_comment(
     doc_result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == body.document_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     if doc_result.scalar_one_or_none() is None:
@@ -75,6 +76,15 @@ async def list_comments(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    doc_result = await session.execute(
+        select(DocumentModel).where(
+            DocumentModel.id == document_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
+        )
+    )
+    if doc_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
     result = await session.execute(
         select(CommentModel)
         .where(
@@ -92,8 +102,11 @@ async def resolve_comment(
     session: AsyncSession = Depends(get_session),
 ):
     result = await session.execute(
-        select(CommentModel).where(
+        select(CommentModel)
+        .join(DocumentModel, DocumentModel.id == CommentModel.document_id)
+        .where(
             CommentModel.id == comment_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     model = result.scalar_one_or_none()

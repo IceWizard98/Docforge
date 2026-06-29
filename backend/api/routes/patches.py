@@ -49,6 +49,7 @@ async def generate_patch(
     result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == body.document_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     doc = result.scalar_one_or_none()
@@ -113,6 +114,7 @@ async def generate_patch_for_existing(
     result = await session.execute(
         select(PatchSetModel).where(
             PatchSetModel.id == patch_id,
+            PatchSetModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     patch = result.scalar_one_or_none()
@@ -122,6 +124,7 @@ async def generate_patch_for_existing(
     doc_result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == patch.document_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     doc = doc_result.scalar_one_or_none()
@@ -198,6 +201,15 @@ async def list_document_suggestions(
     session: AsyncSession = Depends(get_session),
 ):
     """Flatten proposed patch-set operations for a document into review suggestions."""
+    doc_result = await session.execute(
+        select(DocumentModel).where(
+            DocumentModel.id == document_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
+        )
+    )
+    if doc_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
     result = await session.execute(
         select(PatchSetModel).where(
             PatchSetModel.document_id == document_id,
@@ -237,6 +249,7 @@ async def get_patch(
     result = await session.execute(
         select(PatchSetModel).where(
             PatchSetModel.id == patch_id,
+            PatchSetModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     patch = result.scalar_one_or_none()
@@ -272,6 +285,7 @@ async def accept_operation(
     result = await session.execute(
         select(PatchSetModel).where(
             PatchSetModel.id == patch_id,
+            PatchSetModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     patch = result.scalar_one_or_none()
@@ -304,6 +318,7 @@ async def reject_operation(
     result = await session.execute(
         select(PatchSetModel).where(
             PatchSetModel.id == patch_id,
+            PatchSetModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     patch = result.scalar_one_or_none()
@@ -335,6 +350,7 @@ async def apply_patch(
     result = await session.execute(
         select(PatchSetModel).where(
             PatchSetModel.id == patch_id,
+            PatchSetModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     patch = result.scalar_one_or_none()
@@ -344,6 +360,7 @@ async def apply_patch(
     doc_result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == patch.document_id,
+            DocumentModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     doc = doc_result.scalar_one_or_none()

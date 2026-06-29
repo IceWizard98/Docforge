@@ -86,10 +86,13 @@ async def search_sources(
     pgvector = PgvectorAdapter(session)
     service = HybridSearchService(pgvector)
 
+    # Corpus isolation: only the caller's own sources.
+    rf = _to_retrieval_filters(body.filters) or RetrievalFilters()
+    rf.owner_id = current_user.user_id
     results = await service.hybrid_search(
         embedding=body.embedding,
         query_text=body.query,
-        filters=_to_retrieval_filters(body.filters),
+        filters=rf,
         top_k=body.top_k,
     )
 
@@ -121,8 +124,13 @@ async def list_all_sources(
 ):
     """List all uploaded source documents."""
     offset = (page - 1) * per_page
-    base = select(SourceDocumentModel)
-    count_base = select(func.count()).select_from(SourceDocumentModel)
+    owner = uuid.UUID(current_user.user_id)
+    base = select(SourceDocumentModel).where(SourceDocumentModel.created_by == owner)
+    count_base = (
+        select(func.count())
+        .select_from(SourceDocumentModel)
+        .where(SourceDocumentModel.created_by == owner)
+    )
     if status:
         base = base.where(SourceDocumentModel.status == status)
         count_base = count_base.where(SourceDocumentModel.status == status)
@@ -196,6 +204,7 @@ async def upload_source(
     source = SourceDocumentModel(
         id=source_id,
         document_id=None,
+        created_by=uuid.UUID(current_user.user_id),
         filename=file.filename,
         doc_type=ext.lstrip("."),
         file_key=stored_path,
@@ -223,6 +232,7 @@ async def _get_owned_source(
     result = await session.execute(
         select(SourceDocumentModel).where(
             SourceDocumentModel.id == source_id,
+            SourceDocumentModel.created_by == uuid.UUID(current_user.user_id),
         )
     )
     source = result.scalar_one_or_none()
@@ -300,14 +310,28 @@ async def reindex_all_sources(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Re-index every source (e.g. after a chunking change)."""
+    """Re-index every source owned by the current user (e.g. after a chunking change)."""
     from sqlalchemy import text as sql_text
 
-    result = await session.execute(select(SourceDocumentModel.id))
+    owner = uuid.UUID(current_user.user_id)
+    result = await session.execute(
+        select(SourceDocumentModel.id).where(
+            SourceDocumentModel.created_by == owner
+        )
+    )
     source_ids = [row[0] for row in result.all()]
-    await session.execute(sql_text("DELETE FROM document_chunks"))
+    # Only delete chunks belonging to this user's own sources.
     await session.execute(
-        SourceDocumentModel.__table__.update().values(status="uploaded")
+        sql_text(
+            "DELETE FROM document_chunks WHERE source_document_id IN "
+            "(SELECT id FROM source_documents WHERE created_by = CAST(:owner AS uuid))"
+        ),
+        {"owner": str(owner)},
+    )
+    await session.execute(
+        SourceDocumentModel.__table__.update()
+        .where(SourceDocumentModel.created_by == owner)
+        .values(status="uploaded")
     )
     await session.flush()
     for sid in source_ids:
@@ -354,9 +378,11 @@ async def get_document_sources(
     session: AsyncSession = Depends(get_session),
 ):
     doc_uuid = document_id
+    owner = uuid.UUID(current_user.user_id)
     result = await session.execute(
         select(DocumentModel).where(
             DocumentModel.id == doc_uuid,
+            DocumentModel.created_by == owner,
         )
     )
     doc = result.scalar_one_or_none()
@@ -366,6 +392,7 @@ async def get_document_sources(
     sources_result = await session.execute(
         select(SourceDocumentModel).where(
             SourceDocumentModel.document_id == doc_uuid,
+            SourceDocumentModel.created_by == owner,
         ).order_by(SourceDocumentModel.created_at)
     )
     sources = sources_result.scalars().all()
