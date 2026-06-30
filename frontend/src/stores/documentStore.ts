@@ -86,6 +86,7 @@ export const useDocumentStore = defineStore('document', () => {
       title.value = newTitle
     } catch (e: any) {
       error.value = extractApiError(e, 'Failed to update title')
+      throw e // let the caller show a failure toast instead of a false success
     }
   }
 

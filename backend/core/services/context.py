@@ -4,8 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from adapters.llm.embeddings import create_embedding_provider
-
 logger = logging.getLogger(__name__)
 
 
@@ -54,6 +52,9 @@ class ContextPackService:
         if embedding_fn is not None:
             self._embedding_fn = embedding_fn
         else:
+            # Lazy adapter import (keeps core/ import-clean of adapters; this is a
+            # convenience fallback only — callers normally inject embedding_fn).
+            from adapters.llm.embeddings import create_embedding_provider
             from config.settings import get_settings
             try:
                 settings = get_settings()

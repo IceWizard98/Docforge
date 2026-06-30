@@ -90,11 +90,15 @@ class AnthropicProvider(LLMProvider):
         self.model = model
         self.base_url = base_url or settings.anthropic_base_url
         self._client: httpx.AsyncClient | None = None
+        self._client_loop: asyncio.AbstractEventLoop | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if not self.api_key:
             raise ValueError("Anthropic API key not configured. Set ANTHROPIC_API_KEY in .env")
-        if self._client is None:
+        # Recreate per event loop: the lru_cached provider outlives each Celery
+        # task's asyncio.run() loop, and an httpx client can't cross loops.
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._client_loop is not loop:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={
@@ -104,6 +108,7 @@ class AnthropicProvider(LLMProvider):
                 },
                 timeout=300.0,
             )
+            self._client_loop = loop
         return self._client
 
     def _validate_prompt(self, prompt: str, model: str) -> str:

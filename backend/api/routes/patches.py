@@ -98,6 +98,7 @@ async def generate_patch(
         document_id=body.document_id,
         version_from=patch_set.version_from,
         version_to=patch_set.version_to,
+        status=patch_set.status,
         summary=patch_set.summary,
         operations=patch_set.operations or [],
         created_by=str(patch_set.created_by),
@@ -143,7 +144,7 @@ async def generate_patch_for_existing(
     plan = await service.generate_patch_plan(doc_dict, patch.summary, provider)
 
     raw_ops = plan.get("operations", [])
-    patch.operations = _enrich_operations(raw_ops, patch_id)
+    patch.operations = _enrich_operations(raw_ops, str(patch_id))
     patch.summary = plan.get("summary", patch.summary)
     patch.version_from = doc.version
     patch.version_to = doc.version + 1
@@ -166,6 +167,7 @@ async def generate_patch_for_existing(
         document_id=str(patch.document_id),
         version_from=patch.version_from,
         version_to=patch.version_to,
+        status=patch.status,
         summary=patch.summary,
         operations=patch.operations or [],
         created_by=str(patch.created_by),
@@ -261,6 +263,7 @@ async def get_patch(
         document_id=str(patch.document_id),
         version_from=patch.version_from,
         version_to=patch.version_to,
+        status=patch.status,
         summary=patch.summary,
         operations=patch.operations or [],
         created_by=str(patch.created_by),
@@ -273,6 +276,16 @@ def _find_operation(operations: list[dict], op_id: str) -> dict | None:
         if op.get("id") == op_id:
             return op
     return None
+
+
+def _close_patch_set_if_resolved(patch) -> None:
+    """Move a patch set out of 'proposed' once no operation is left pending, so it
+    stops being re-surfaced as a suggestion on every reload. Applied (if any op was
+    accepted) vs rejected (all rejected)."""
+    ops = patch.operations or []
+    if any(op.get("status", "pending") == "pending" for op in ops):
+        return
+    patch.status = "applied" if any(op.get("status") == "accepted" for op in ops) else "rejected"
 
 
 @router.post("/{patch_id}/operations/{op_id}/accept", response_model=dict)
@@ -296,8 +309,33 @@ async def accept_operation(
     if operation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Operation not found")
 
+    # Accept = apply immediately. Apply only THIS op (not the whole set) so each
+    # accepted op lands exactly once; the `applied` flag makes it idempotent across
+    # re-accepts and the legacy bulk /apply. Load the doc BEFORE mutating state so a
+    # missing doc fails cleanly instead of reporting a phantom success.
+    if not operation.get("applied"):
+        doc_result = await session.execute(
+            select(DocumentModel).where(
+                DocumentModel.id == patch.document_id,
+                DocumentModel.created_by == uuid.UUID(current_user.user_id),
+            )
+        )
+        doc = doc_result.scalar_one_or_none()
+        if doc is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        service = PatchService()
+        updated = await service.apply_operation(
+            operation, {"version": doc.version, "content": doc.content or {}}
+        )
+        if updated.get("_changed"):
+            doc.content = updated.get("content", doc.content)
+            doc.version += 1
+            patch.version_to = doc.version
+            operation["applied"] = True
+
     operation["status"] = "accepted"
     flag_modified(patch, "operations")
+    _close_patch_set_if_resolved(patch)
     try:
         await session.flush()
     except SQLAlchemyError:
@@ -331,6 +369,7 @@ async def reject_operation(
 
     operation["status"] = "rejected"
     flag_modified(patch, "operations")
+    _close_patch_set_if_resolved(patch)
     try:
         await session.flush()
     except SQLAlchemyError:
@@ -367,22 +406,26 @@ async def apply_patch(
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    patch_set_dict = {
-        "version_to": (patch.version_to or patch.version_from + 1),
-        "operations": patch.operations or [],
-    }
-    doc_dict = {
-        "version": doc.version,
-        "content": doc.content or {},
-    }
-
+    # Apply each accepted-not-yet-applied op through the SAME per-op primitive the
+    # accept flow uses (single source of truth). Only ops that actually change the
+    # document are flagged applied / bump the version; the set's terminal status is
+    # derived from the op states, never set unconditionally.
     service = PatchService()
-    updated = await service.apply_patch(patch_set_dict, doc_dict)
-
-    doc.content = updated.get("content", doc.content)
-    doc.version += 1
-    patch.version_to = doc.version
-    patch.status = "applied"
+    current = {"version": doc.version, "content": doc.content or {}}
+    any_applied = False
+    for op in patch.operations or []:
+        if op.get("status") == "accepted" and not op.get("applied"):
+            updated = await service.apply_operation(op, current)
+            if updated.get("_changed"):
+                current = {"version": updated["version"], "content": updated["content"]}
+                op["applied"] = True
+                any_applied = True
+    if any_applied:
+        doc.content = current["content"]
+        doc.version = current["version"]
+        patch.version_to = doc.version
+    _close_patch_set_if_resolved(patch)
+    flag_modified(patch, "operations")
     try:
         await session.flush()
     except SQLAlchemyError as exc:
@@ -395,4 +438,4 @@ async def apply_patch(
         "Patch set %s applied to document %s by user %s",
         patch_id, doc.id, current_user.user_id,
     )
-    return {"status": "applied", "patch_id": patch_id, "new_version": doc.version}
+    return {"status": patch.status, "patch_id": patch_id, "new_version": doc.version}

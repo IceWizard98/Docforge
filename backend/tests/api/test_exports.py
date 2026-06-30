@@ -68,6 +68,6 @@ class TestCreateExportAuthorization:
             )
 
         assert resp.status_code == 202
-        task.delay.assert_called_once()
-        # The dispatched task carries the document id being exported.
-        assert str(doc.id) in task.delay.call_args.args
+        task.apply_async.assert_called_once()
+        # The dispatched task carries the document id being exported (positional args tuple).
+        assert str(doc.id) in task.apply_async.call_args.args[0]

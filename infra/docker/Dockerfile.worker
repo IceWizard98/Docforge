@@ -27,4 +27,7 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD celery -A workers.celery_app inspect ping --timeout=5 || exit 1
 
-CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--without-gossip", "--without-mingle", "--without-heartbeat", "--max-memory-per-child=50000", "--concurrency=4"]
+# --max-memory-per-child is in KB. 500000 ≈ 500 MB: recycle a child only after a
+# real leak, not after every task (a fresh Python+SQLAlchemy+LLM child already
+# exceeds the old 50 MB just on import).
+CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--without-gossip", "--without-mingle", "--without-heartbeat", "--max-memory-per-child=500000", "--concurrency=4"]

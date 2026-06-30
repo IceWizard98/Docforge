@@ -36,6 +36,11 @@ celery_app.conf.update(
     task_default_retry_delay=300,
     task_max_retries=3,
     worker_prefetch_multiplier=1,
+    # Reap wedged tasks so a hung LLM/embeddings/DB call can't occupy a worker slot
+    # forever. Soft limit raises SoftTimeLimitExceeded (catchable); hard limit kills
+    # the worker child. Generous, since local-model drafting is genuinely slow.
+    task_soft_time_limit=900,   # 15 min
+    task_time_limit=1020,       # 17 min hard ceiling
 )
 
 

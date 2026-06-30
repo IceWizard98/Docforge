@@ -28,6 +28,45 @@ def _build_mock_draft(overrides=None):
     return draft
 
 
+class TestGetActiveDraft:
+    @pytest.mark.asyncio
+    async def test_returns_generating_draft(self, async_client, mock_session, auth_headers):
+        draft = _build_mock_draft({
+            "status": "generating",
+            "progress": {"total_sections": 3, "completed_sections": 1},
+        })
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = draft
+        mock_session.execute.return_value = result
+
+        sid = str(uuid.uuid4())
+        resp = await async_client.get(f"/api/v1/drafts/active/{sid}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body is not None
+        assert body["status"] == "generating"
+        assert body["progress"]["completed_sections"] == 1
+        assert body["id"] == str(draft.id)
+
+    @pytest.mark.asyncio
+    async def test_returns_null_when_no_active_draft(self, async_client, mock_session, auth_headers):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = result
+
+        sid = str(uuid.uuid4())
+        resp = await async_client.get(f"/api/v1/drafts/active/{sid}", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json() is None
+
+    @pytest.mark.asyncio
+    async def test_unauthorized(self, async_client, mock_session):
+        resp = await async_client.get(f"/api/v1/drafts/active/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
 class TestProvenanceLinksFromDraft:
     def _content(self):
         return {"type": "doc", "content": [

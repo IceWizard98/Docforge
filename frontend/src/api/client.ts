@@ -105,6 +105,10 @@ apiClient.interceptors.response.use(
         }
       }
 
+      // No refresh token: reject any queued requests and clear the refreshing flag
+      // so a later 401 isn't stuck waiting on a refresh that will never run.
+      processQueue(error, null)
+      isRefreshing = false
       localStorage.removeItem('auth_token')
       localStorage.removeItem('refresh_token')
       window.location.href = '/login'
@@ -301,7 +305,12 @@ export async function sendMessageWithAttachment(
   formData.append('content', content)
   files.forEach((file) => formData.append('files', file))
   if (context) {
-    formData.append('context', JSON.stringify(context))
+    // Map to the snake_case shape the backend reads (same as the text endpoint's
+    // edit_context); the raw camelCase object was silently ignored.
+    formData.append('context', JSON.stringify({
+      section_id: context.activeSectionId,
+      selected_text: context.selectedText,
+    }))
   }
   const response = await apiClient.post<SendMessageResponse>(`/chat/sessions/${sessionId}/messages/with-files`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -468,6 +477,40 @@ export interface DraftStatusResponse {
 
 export async function getDraft(draftId: string): Promise<DraftStatusResponse> {
   const response = await apiClient.get<DraftStatusResponse>(`/drafts/${draftId}`)
+  return response.data
+}
+
+/** The in-progress (generating) draft for a chat session, or null. Lets the UI
+ * resume the "working…" indicator + polling after a page reload. */
+export async function getActiveDraft(sessionId: string): Promise<DraftStatusResponse | null> {
+  const response = await apiClient.get<DraftStatusResponse | null>(`/drafts/active/${sessionId}`)
+  return response.data ?? null
+}
+
+export interface PatchSetOperation {
+  id: string
+  operation: string
+  target_section?: string | null
+  target_path?: string[] | null
+  content?: unknown
+  rationale?: string | null
+  status: string // pending | accepted | rejected
+  applied?: boolean
+}
+
+export interface PatchSetResponse {
+  id: string
+  document_id: string
+  status: string // proposed | applied | rejected
+  summary: string
+  operations: PatchSetOperation[]
+}
+
+/** Current state of a patch set (live operation statuses), so a reloaded review
+ * card reflects what was already accepted/applied instead of the stale snapshot
+ * persisted in the chat message. */
+export async function getPatchSet(patchId: string): Promise<PatchSetResponse> {
+  const response = await apiClient.get<PatchSetResponse>(`/patches/${patchId}`)
   return response.data
 }
 

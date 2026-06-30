@@ -8,19 +8,38 @@ class EmbeddingProvider(Protocol):
     async def generate_embedding(self, text: str) -> list[float]:
         ...
 
+    async def aclose(self) -> None:
+        ...
+
 
 class OpenAIEmbeddingAdapter:
-    def __init__(self, api_key: str, model: str = "text-embedding-3-small", base_url: str | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "text-embedding-3-small",
+        base_url: str | None = None,
+        dimension: int | None = None,
+    ):
         from openai import AsyncOpenAI
         kwargs = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
         self._client = AsyncOpenAI(**kwargs)
         self._model = model
+        # Without this, text-embedding-3-* returns 1536 dims, which mismatches the
+        # vector(768) pgvector column and fails every insert. Pin to the configured
+        # dimension so the output matches the schema.
+        self._dimension = dimension
 
     async def generate_embedding(self, text: str) -> list[float]:
-        resp = await self._client.embeddings.create(input=text, model=self._model)
+        kwargs: dict = {"input": text, "model": self._model}
+        if self._dimension:
+            kwargs["dimensions"] = self._dimension
+        resp = await self._client.embeddings.create(**kwargs)
         return resp.data[0].embedding
+
+    async def aclose(self) -> None:
+        await self._client.close()
 
 
 class OllamaEmbeddingAdapter:
@@ -42,6 +61,9 @@ class OllamaEmbeddingAdapter:
         data = resp.json()
         return data["data"][0]["embedding"]
 
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
 
 class StubEmbeddingAdapter:
     def __init__(self, dimension: int = 1536):
@@ -49,6 +71,9 @@ class StubEmbeddingAdapter:
 
     async def generate_embedding(self, text: str) -> list[float]:
         return [0.0] * self._dimension
+
+    async def aclose(self) -> None:
+        return None
 
 
 def create_embedding_provider(settings) -> EmbeddingProvider:
@@ -64,6 +89,7 @@ def create_embedding_provider(settings) -> EmbeddingProvider:
             api_key=settings.openai_api_key,
             model=getattr(settings, "openai_embedding_model", "text-embedding-3-small"),
             base_url=settings.openai_base_url,
+            dimension=dimension,
         )
     elif provider_name == "ollama":
         return OllamaEmbeddingAdapter(

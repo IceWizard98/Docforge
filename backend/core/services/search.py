@@ -5,6 +5,23 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+def _loads_lenient(raw: str) -> dict | None:
+    """Parse a JSON object from an LLM reply that may wrap it in prose/fences.
+
+    Kept inline (not the adapter's extract_json) so core/services stays free of
+    adapter imports."""
+    try:
+        return json.loads(raw)
+    except Exception:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return json.loads(raw[start:end + 1])
+            except Exception:
+                return None
+        return None
+
+
 @dataclass
 class RetrievalFilters:
     doc_type: list[str] | None = None
@@ -32,9 +49,12 @@ class SearchResult:
 class HybridSearchService:
     RRF_K = 60
 
-    def __init__(self, pgvector, llm_provider=None):
+    def __init__(self, pgvector, llm_provider=None, enable_rerank=False):
         self.pgvector = pgvector
         self.llm_provider = llm_provider
+        # Off by default: the LLM rerank cost is paid on every search and adds
+        # latency. Enable explicitly when the quality gain is worth it.
+        self.enable_rerank = enable_rerank
 
     async def hybrid_search(
         self,
@@ -95,7 +115,7 @@ class HybridSearchService:
                 )
             )
 
-        if self.llm_provider:
+        if self.llm_provider and self.enable_rerank:
             results = await self._rerank_results(query_text, results)
 
         return results
@@ -103,11 +123,8 @@ class HybridSearchService:
     async def _rerank_results(
         self, query: str, results: list[SearchResult]
     ) -> list[SearchResult]:
-        if not results:
-            return results
-
-        best_score = max(r.score for r in results)
-        if best_score >= 0.7:
+        # Nothing to reorder with 0 or 1 result.
+        if len(results) <= 1:
             return results
 
         top_n = results[:5]
@@ -125,7 +142,7 @@ class HybridSearchService:
 
         try:
             raw = await self.llm_provider.generate(prompt)
-            resp = json.loads(raw)
+            resp = _loads_lenient(raw)
             llm_scores = resp.get("scores") if isinstance(resp, dict) else None
             if (
                 llm_scores

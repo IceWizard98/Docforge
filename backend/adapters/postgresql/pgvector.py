@@ -137,12 +137,10 @@ class PgvectorAdapter:
         query = f"""
             SELECT dc.id as chunk_id, dc.document_id as doc_id, dc.section_id,
                 dc.chunk_index, dc.text_content as content, dc.metadata,
-                ts_rank(to_tsvector('italian', coalesce(dc.text_content, '')),
-                        plainto_tsquery('italian', :query_text)) AS score
+                ts_rank(dc.tsv_content, plainto_tsquery('italian', :query_text)) AS score
             FROM document_chunks dc
             LEFT JOIN source_documents sd ON sd.id = dc.source_document_id
-            WHERE to_tsvector('italian', coalesce(dc.text_content, ''))
-                  @@ plainto_tsquery('italian', :query_text){filter_clause}
+            WHERE dc.tsv_content @@ plainto_tsquery('italian', :query_text){filter_clause}
             ORDER BY score DESC
             LIMIT :limit
         """  # noqa: S608

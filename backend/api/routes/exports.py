@@ -64,7 +64,11 @@ async def create_export(
     _EXPORT_STATUS[str(export_id)] = "processing"
 
     doc_data = {"id": str(doc_id), "title": doc.title, "content": doc.content, "version": doc.version}
-    export_document_task.delay(str(export_id), str(doc_id), doc_data, body.format)
+    # countdown gives the request transaction time to commit before the worker runs,
+    # so the task doesn't race ahead of the audit/export row it expects.
+    export_document_task.apply_async(
+        (str(export_id), str(doc_id), doc_data, body.format), countdown=1
+    )
 
     return ExportResponse(
         id=str(export_id),

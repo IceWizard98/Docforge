@@ -150,9 +150,14 @@ def classify_document_task(source_doc_id: str, doc_id: str | None = None) -> Doc
                             for c in chunks
                         ]
                         embedding_provider = create_embedding_provider(settings)
-                        embeddings = await asyncio.gather(
-                            *(embedding_provider.generate_embedding(c.text) for c in chunks)
-                        )
+                        try:
+                            embeddings = await asyncio.gather(
+                                *(embedding_provider.generate_embedding(c.text) for c in chunks)
+                            )
+                        finally:
+                            # Per-task adapter holds an httpx client; close it so the
+                            # task's loop doesn't leave an unclosed connection pool.
+                            await embedding_provider.aclose()
                         pgvector = PgvectorAdapter(session)
                         await pgvector.store_embeddings(chunk_dicts, list(embeddings))
                         logger.info(

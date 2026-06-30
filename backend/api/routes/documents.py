@@ -429,7 +429,8 @@ async def upload_document(
     doc_type = normalize_doc_type(ext.lstrip("."))
     title = Path(file.filename).stem
     storage = MinioStorageAdapter()
-    minio_path = f"source/{doc_uuid}/{file.filename}"
+    # Strip directory components so a crafted filename can't escape the key prefix.
+    minio_path = f"source/{doc_uuid}/{Path(file.filename or 'upload').name}"
 
     try:
         stored_path = await storage.upload(

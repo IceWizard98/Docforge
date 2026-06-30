@@ -130,8 +130,8 @@ function handleAction(action: ChatActionPayload) {
         </div>
         <div class="flex flex-wrap gap-1">
           <span
-            v-for="slot in missingSlots"
-            :key="slot.slotId"
+            v-for="(slot, idx) in missingSlots"
+            :key="(slot.slotId || 'slot') + '_' + idx"
             class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full border"
             :class="slot.status === 'ambiguous'
               ? 'bg-warning/10 text-warning border-warning/20'
@@ -146,8 +146,8 @@ function handleAction(action: ChatActionPayload) {
       <!-- Source citations -->
       <div v-if="hasSources" class="flex flex-wrap gap-1.5 mt-2">
         <span
-          v-for="src in message.sources"
-          :key="src.sourceDocId"
+          v-for="(src, idx) in message.sources"
+          :key="(src.sourceDocId || 'src') + '_' + idx"
           class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-primary/5 text-primary/60 border border-primary/10"
         >
           <ExternalLink class="w-2.5 h-2.5" />

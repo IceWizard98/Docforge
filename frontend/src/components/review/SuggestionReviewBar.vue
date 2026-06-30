@@ -36,7 +36,16 @@ const suggestionTypeLabel = computed(() => {
   }
 })
 
-async function persistDecision(suggestionId: string, decision: 'accepted' | 'rejected') {
+async function refreshDocument() {
+  const docId = route.params.id as string
+  if (docId) await documentStore.fetchDocument(docId)
+}
+
+async function persistDecision(
+  suggestionId: string,
+  decision: 'accepted' | 'rejected',
+  refresh = true,
+) {
   persisting.value.add(suggestionId)
   try {
     const editor = props.editor.value
@@ -49,6 +58,8 @@ async function persistDecision(suggestionId: string, decision: 'accepted' | 'rej
     }
     if (decision === 'accepted') {
       await suggestionStore.acceptSuggestion(suggestionId)
+      // Backend applies the op immediately; refresh so the editor shows it.
+      if (refresh) await refreshDocument()
     } else {
       await suggestionStore.rejectSuggestion(suggestionId)
     }
@@ -60,18 +71,25 @@ async function persistDecision(suggestionId: string, decision: 'accepted' | 'rej
 }
 
 async function persistAll(decision: 'accepted' | 'rejected') {
+  // Defer the per-accept refetch; do a single document refresh at the end.
   for (const s of suggestionStore.pendingSuggestions) {
-    await persistDecision(s.suggestionId, decision)
+    await persistDecision(s.suggestionId, decision, false)
   }
-  if (decision === 'accepted') {
-    await suggestionStore.applyAccepted()
-    const docId = route.params.id as string
-    if (docId) await documentStore.fetchDocument(docId)
-  }
+  if (decision === 'accepted') await refreshDocument()
+}
+
+function isEditableTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true
 }
 
 function handleKeydown(e: KeyboardEvent) {
   if (!hasPending.value || !suggestionStore.currentSuggestion) return
+  // Don't hijack keystrokes while the user is typing in the editor, title, rename,
+  // or chat input — only act on the review shortcuts when focus is outside fields.
+  if (isEditableTarget(e.target)) return
   if (e.key === 'ArrowLeft') {
     suggestionStore.goPrev()
     e.preventDefault()

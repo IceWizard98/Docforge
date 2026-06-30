@@ -9,7 +9,7 @@ import ErrorMessage from '@/components/common/ErrorMessage.vue'
 import { useEditorContext } from '@/composables/useEditorContext'
 import { useChatStore } from '@/stores/chatStore'
 import { useDocumentStore } from '@/stores/documentStore'
-import { promoteDraft, getDraft, extractApiError } from '@/api/client'
+import { promoteDraft, getDraft, getActiveDraft, getChatSession, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 import type { ChatActionPayload, SourceRef, ChatMessageResponse } from '@/types/document'
 import type { Editor } from '@tiptap/core'
@@ -95,7 +95,8 @@ async function send() {
   }
 
   handleAssistantResponse(response)
-  await chatStore.loadSessions(props.documentId, false)
+  await chatStore.loadSessions(props.documentId, false, false)
+  maybePollReply() // request timed out but backend may still be producing the reply
 
   await nextTick()
   scrollToBottom()
@@ -163,7 +164,8 @@ async function handleAction(action: ChatActionPayload) {
 
   const response = await chatStore.sendMessage(contextMessage, context.value, props.documentId)
   handleAssistantResponse(response)
-  await chatStore.loadSessions(props.documentId, false)
+  await chatStore.loadSessions(props.documentId, false, false)
+  maybePollReply()
 }
 
 async function handlePromote() {
@@ -191,9 +193,10 @@ const AUTO_APPLY_ACTIONS = ['draft_ready', 'section_created', 'clause_inserted',
 let draftPollTimer: ReturnType<typeof setInterval> | null = null
 let activeDraftId: string | null = null // also a cancel token for in-flight polls
 const DRAFT_POLL_MS = 3000
-// Hard ceiling for a genuinely stuck worker. The counter is RESET whenever a
-// section completes, so a slow-but-progressing draft is never killed.
-const DRAFT_POLL_MAX_ATTEMPTS = 300 // ~15 min of NO progress
+// No client-side timeout: the indicator must stay visible for as long as the
+// backend reports the draft is generating (survives reloads via getActiveDraft).
+// Polling stops only on a terminal backend status or if the draft no longer
+// exists (404) — never on elapsed time.
 
 function stopDraftPolling() {
   if (draftPollTimer) { clearInterval(draftPollTimer); draftPollTimer = null }
@@ -201,12 +204,12 @@ function stopDraftPolling() {
 }
 
 function startDraftPolling(draftId: string, title?: string) {
+  if (activeDraftId === draftId) return // already polling this draft — no duplicate bubble/interval
   stopDraftPolling()
   activeDraftId = draftId
   // Bind the completion to the document open NOW: an in-flight poll that resolves
   // after the user switched docs must NOT overwrite the new document.
   const targetDocId = props.documentId
-  let attempts = 0
   let lastCompleted = -1
   // Keep a reference to the spinner message so we can update it in place with
   // live progress instead of spamming new bubbles (pushMessage keeps the ref).
@@ -221,13 +224,6 @@ function startDraftPolling(draftId: string, title?: string) {
 
   draftPollTimer = setInterval(async () => {
     if (activeDraftId !== draftId) return
-    if (++attempts > DRAFT_POLL_MAX_ATTEMPTS) {
-      stopDraftPolling()
-      chatStore.updateMessageContent(
-        genMsg.id, 'La generazione sta impiegando troppo tempo. Riprova più tardi.',
-      )
-      return
-    }
     try {
       const d = await getDraft(draftId)
       if (activeDraftId !== draftId) return // cancelled/superseded while awaiting
@@ -236,7 +232,6 @@ function startDraftPolling(draftId: string, title?: string) {
       const total = prog.total_sections ?? 0
       if (completed !== lastCompleted) {
         lastCompleted = completed
-        attempts = 0 // progressing → never time out
         if (d.status === 'generating' && total > 0) {
           chatStore.updateMessageContent(
             genMsg.id, `⏳ Sto generando **${docLabel}** … (sezione ${completed}/${total})`,
@@ -262,16 +257,128 @@ function startDraftPolling(draftId: string, title?: string) {
           )
         }
       }
-    } catch {
-      // transient errors: keep polling (the row may not be committed yet)
+    } catch (e: any) {
+      // The draft is gone (deleted) → stop; any other error is transient
+      // (row not committed yet, network blip) → keep polling, no timeout.
+      if (e?.response?.status === 404) {
+        stopDraftPolling()
+      }
     }
   }, DRAFT_POLL_MS)
 }
 
-onUnmounted(stopDraftPolling)
+// Reload-survivable: the spinner message + currentDraftId are client-only, so on
+// (re)entering a session ask the backend whether a generation is still running
+// and resume the indicator/polling. No-op when nothing is generating.
+async function resumeActiveDraft(sessionId: string) {
+  if (activeDraftId) return // already polling in this tab
+  try {
+    const d = await getActiveDraft(sessionId)
+    // startDraftPolling is idempotent per draftId, so a send that already started
+    // polling this same draft during the await won't spawn a duplicate.
+    if (d && d.status === 'generating') {
+      startDraftPolling(d.id, d.title)
+    }
+  } catch {
+    // best-effort: a failed lookup just means no resumed indicator
+  }
+}
+
+// Chat-reply reconciliation: the reply request is synchronous and can time out
+// client-side while the backend keeps working and persists the reply. If the last
+// message is the user's (no assistant reply yet), poll the session until the reply
+// lands and surface it — no client timeout, survives reloads. Reuses the draft
+// resume shape.
+let replyPollTimer: ReturnType<typeof setInterval> | null = null
+const REPLY_POLL_MS = 3500
+// Generous ceiling so a reply that NEVER lands (backend crashed before persisting)
+// doesn't poll forever / show the indicator indefinitely. ~5 min of attempts.
+const REPLY_POLL_MAX_ATTEMPTS = 85
+
+function stopReplyPolling() {
+  if (replyPollTimer) { clearInterval(replyPollTimer); replyPollTimer = null }
+}
+
+function startReplyPolling(sessionId: string) {
+  if (replyPollTimer) return // single source of truth: timer presence == polling
+  // While a request is actively in flight, that request will surface the reply;
+  // the poller only covers the timed-out / reloaded case. Avoids a double-render.
+  if (chatStore.isSending) return
+  if (!chatStore.awaitingReply || sessionId !== chatStore.sessionId) return
+  let attempts = 0
+  replyPollTimer = setInterval(async () => {
+    if (sessionId !== chatStore.sessionId || !chatStore.awaitingReply) { stopReplyPolling(); return }
+    if (chatStore.isSending) return // a fresh send is in flight; let it win this tick
+    if (++attempts > REPLY_POLL_MAX_ATTEMPTS) {
+      stopReplyPolling()
+      chatStore.pushMessage({
+        id: `replyfail_${Date.now()}`,
+        role: 'assistant',
+        content: 'La risposta sta tardando troppo. Ricarica la pagina o riprova.',
+        created_at: new Date().toISOString(),
+      } as ChatMessageResponse)
+      return
+    }
+    try {
+      const session = await getChatSession(sessionId)
+      // Re-check after the await: a fresh send may have started (don't clobber its
+      // optimistic bubble) or the user navigated away.
+      if (sessionId !== chatStore.sessionId || chatStore.isSending || !chatStore.awaitingReply) {
+        if (sessionId !== chatStore.sessionId) stopReplyPolling()
+        return
+      }
+      const msgs = session.messages || []
+      const last = msgs[msgs.length - 1]
+      if (last && last.role === 'assistant') {
+        // Server truth (reply + actions). Preserve any client-only draft spinner
+        // bubbles (gen_*) that the server doesn't know about.
+        const localGen = chatStore.messages.filter(
+          m => typeof m.id === 'string' && m.id.startsWith('gen_') && !msgs.some(s => s.id === m.id),
+        )
+        chatStore.messages = [...msgs, ...localGen] as ChatMessageResponse[]
+        stopReplyPolling()
+        // Resume any draft generation embedded in the freshly-loaded reply.
+        for (const m of msgs) {
+          for (const a of ((m.actions as ChatActionPayload[] | undefined) || [])) {
+            if (a.action === 'draft_generating' && a.payload?.draft_id) {
+              startDraftPolling(a.payload.draft_id as string, a.payload?.title as string)
+            }
+          }
+        }
+      }
+    } catch {
+      // transient (timeout/network): keep polling until the attempts ceiling
+    }
+  }, REPLY_POLL_MS)
+}
+
+function maybePollReply() {
+  if (chatStore.sessionId && chatStore.awaitingReply) startReplyPolling(chatStore.sessionId)
+}
+
+// Only react to entering a DIFFERENT, real session. Ignore transient null resets
+// (e.g. loadSessions briefly clearing a stale id) so they can't kill a live poll.
+let watchedSession: string | null = null
+watch(
+  () => chatStore.sessionId,
+  (sid) => {
+    if (sid === watchedSession) return
+    watchedSession = sid
+    stopReplyPolling() // switched sessions: drop the previous session's reply poll
+    if (!sid) return
+    stopDraftPolling() // switched sessions: drop the previous session's draft poll
+    resumeActiveDraft(sid)
+    startReplyPolling(sid) // resume "working" indicator if a reply is still pending
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => { stopDraftPolling(); stopReplyPolling() })
 
 function handleAssistantResponse(response: ChatMessageResponse | null) {
   if (response?.role === 'assistant') {
+    // Dedupe: the reconciliation poller may have already surfaced this reply.
+    if (chatStore.messages.some(m => m.id === response.id)) return
     chatStore.pushMessage({
       id: response.id,
       role: 'assistant',
@@ -525,9 +632,12 @@ onMounted(() => {
         <ChatMessage :message="msg" @action="handleAction" @patch-applied="onPatchApplied" />
       </template>
 
-      <div v-if="chatStore.isSending && chatStore.messages.length > 0" class="flex items-center gap-2 text-xs text-foreground/40 pl-10">
-        <Loader2 class="w-3 h-3 animate-spin" />
-        <span>Sta scrivendo...</span>
+      <div
+        v-if="(chatStore.isSending || chatStore.awaitingReply) && chatStore.messages.length > 0"
+        class="flex items-center gap-2.5 text-sm text-primary bg-primary/5 border border-primary/10 rounded-lg px-3 py-2 w-fit"
+      >
+        <Loader2 class="w-4 h-4 animate-spin" />
+        <span>L'assistente sta lavorando… può richiedere un minuto sul modello locale.</span>
       </div>
     </div>
 

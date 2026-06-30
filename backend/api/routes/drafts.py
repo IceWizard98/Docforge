@@ -137,6 +137,34 @@ async def start_draft(
     return DraftResponse.model_validate(model)
 
 
+@router.get("/active/{session_id}", response_model=DraftResponse | None)
+async def get_active_draft(
+    session_id: UUID,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return the in-progress (generating) draft for a chat session, or null.
+
+    The polling indicator is purely client-side, so on reload the frontend asks
+    here whether a generation is still running and resumes the indicator/polling —
+    keeping the chat/document state visible with no client timeout."""
+    result = await session.execute(
+        select(DraftModel)
+        .join(ChatSessionModel, DraftModel.chat_session_id == ChatSessionModel.id)
+        .where(
+            DraftModel.chat_session_id == session_id,
+            DraftModel.status == "generating",
+            ChatSessionModel.user_id == uuid.UUID(current_user.user_id),
+        )
+        .order_by(DraftModel.created_at.desc())
+        .limit(1)
+    )
+    model = result.scalar_one_or_none()
+    if model is None:
+        return None
+    return DraftResponse.model_validate(model)
+
+
 @router.get("/{draft_id}", response_model=DraftResponse)
 async def get_draft(
     draft_id: UUID,

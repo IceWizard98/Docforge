@@ -61,6 +61,9 @@ async def create_template(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    # Only admins may publish to the shared public library (it's served to every
+    # user and seeds documents); a non-admin's template is forced private.
+    is_public = bool(body.is_public) and current_user.role == "admin"
     model = TemplateModel(
         id=uuid.uuid4(),
         name=body.name,
@@ -68,7 +71,7 @@ async def create_template(
         doc_type=body.doc_type,
         content=body.content,
         category=body.category,
-        is_public=body.is_public,
+        is_public=is_public,
     )
     session.add(model)
     try:

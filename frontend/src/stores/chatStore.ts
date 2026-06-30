@@ -5,6 +5,22 @@ import * as api from '@/api/client'
 import type { ChatMessageResponse, ChatSessionListItem, SourceRef } from '@/types/document'
 import type { ChatActionPayload } from '@/types/document'
 
+// Local models can take minutes to produce a chat reply (especially one that
+// decides to draft). A short cap aborted the request client-side while the
+// backend kept working — the reply (and its draft action) was discarded, so the
+// UI looked frozen. Give the request real headroom.
+export const CHAT_REQUEST_TIMEOUT_MS = 240000
+
+// Race a request against a timeout, ALWAYS clearing the timer afterwards so a won
+// request doesn't leave a dangling 4-minute timer that later rejects (ignored).
+function raceWithTimeout<T>(p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Request timed out')), CHAT_REQUEST_TIMEOUT_MS)
+  })
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessionId = ref<string | null>(null)
   const messages = ref<ChatMessageResponse[]>([])
@@ -17,13 +33,25 @@ export const useChatStore = defineStore('chat', () => {
   const promoting = ref(false)
   const hasActiveSession = computed(() => sessionId.value !== null)
 
-  async function loadSessions(documentId: string, autoSelect = true) {
+  // The model is still working when the last message is the user's and no
+  // assistant reply has landed yet. Drives a reload-survivable "working" indicator
+  // and the reconciliation poller (the reply is always persisted server-side, even
+  // if the client request timed out).
+  const awaitingReply = computed(() => {
+    const last = messages.value[messages.value.length - 1]
+    return !!last && last.role === 'user'
+  })
+
+  async function loadSessions(documentId: string, autoSelect = true, clearStale = true) {
     sessionLoading.value = true
     try {
       sessions.value = await api.listChatSessions(documentId)
       // If current sessionId belongs to a different document (stale from navigation),
-      // reset it so autoSelect picks the first session for this document
-      if (sessionId.value && !sessions.value.some(s => s.id === sessionId.value)) {
+      // reset it so autoSelect picks the first session for this document.
+      // Skipped on a post-send refresh (clearStale=false): listChatSessions can
+      // briefly lag behind a just-created session, and clearing here would wipe the
+      // reply we just rendered (forcing the user to hard-reload to see it).
+      if (clearStale && sessionId.value && !sessions.value.some(s => s.id === sessionId.value)) {
         sessionId.value = null
         messages.value = []
         currentSources.value = []
@@ -138,14 +166,16 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const sid = await ensureSession(documentId)
       if (!sid) { isSending.value = false; return null }
-      const response = await Promise.race([
-        api.sendMessage(sid, text, context),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 60000)),
-      ])
+      const response = await raceWithTimeout(api.sendMessage(sid, text, context))
       currentSources.value = (response.sources as SourceRef[]) || []
       return response as unknown as ChatMessageResponse
     } catch (e: any) {
-      error.value = extractApiError(e, 'Failed to send message')
+      // On the client-side timeout, stay silent: the backend keeps working and
+      // persists the reply, which the reconciliation poller will surface. Showing
+      // an error banner here would be misleading.
+      if (e?.message !== 'Request timed out') {
+        error.value = extractApiError(e, 'Failed to send message')
+      }
       return null
     } finally {
       isSending.value = false
@@ -159,14 +189,13 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const sid = await ensureSession(documentId)
       if (!sid) { isSending.value = false; return null }
-      const response = await Promise.race([
-        api.sendMessageWithAttachment(sid, text, files, context),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 60000)),
-      ])
+      const response = await raceWithTimeout(api.sendMessageWithAttachment(sid, text, files, context))
       currentSources.value = (response.sources as SourceRef[]) || []
       return response as unknown as ChatMessageResponse
     } catch (e: any) {
-      error.value = extractApiError(e, 'Failed to send message')
+      if (e?.message !== 'Request timed out') {
+        error.value = extractApiError(e, 'Failed to send message')
+      }
       return null
     } finally {
       isSending.value = false
@@ -176,7 +205,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessionId, messages, sessions, currentSources, isSending, error,
     sessionLoading, currentDraftId, promoting,
-    hasActiveSession,
+    hasActiveSession, awaitingReply,
     loadSessions, selectSession, newSession, ensureSession,
     pushMessage, updateMessageContent, setSources, setSending, setError, setCurrentDraftId,
     sendMessage, sendWithFiles, renameSession, deleteSession,

@@ -148,6 +148,9 @@ async def test_handle_insert_clause_appends_to_section():
 @pytest.mark.asyncio
 async def test_handle_rewrite_section_proposes_patch_not_inline():
     doc = _doc_model()
+    doc.content = {"type": "doc", "content": [
+        {"type": "section", "attrs": {"sectionId": "sec_1"}, "content": []},
+    ]}
     session = AsyncMock()
     session.add = MagicMock()  # add() is synchronous
     action_data = {
@@ -158,9 +161,51 @@ async def test_handle_rewrite_section_proposes_patch_not_inline():
     actions, updated = await _handle_document_action(action_data, doc, session, _user(), None, "")
 
     assert actions[0]["action"] == "patches_proposed"
-    assert actions[0]["payload"]["operations"][0]["operation"] == "replace"
+    op = actions[0]["payload"]["operations"][0]
+    assert op["operation"] == "replace"
+    assert op["target_section"] == "sec_1"
     # surgical: nothing written to the document until the user accepts
     assert updated is None
+
+
+@pytest.mark.asyncio
+async def test_handle_rewrite_section_uses_edit_context_when_id_invalid():
+    # The model invented "sec_bogus"; the user is actually editing "sec_real".
+    # The proposed op must target the real section so accept actually changes it.
+    doc = _doc_model()
+    doc.content = {"type": "doc", "content": [
+        {"type": "section", "attrs": {"sectionId": "sec_real"}, "content": []},
+    ]}
+    session = AsyncMock()
+    session.add = MagicMock()
+    action_data = {
+        "type": "rewrite_section",
+        "params": {"section_id": "sec_bogus", "content": "Nuovo testo"},
+    }
+
+    actions, _ = await _handle_document_action(
+        action_data, doc, session, _user(), None, "", "sec_real"
+    )
+
+    assert actions[0]["payload"]["operations"][0]["target_section"] == "sec_real"
+
+
+@pytest.mark.asyncio
+async def test_handle_rewrite_section_drops_when_no_real_target():
+    # Invalid id and no edit context -> can't reliably target -> no phantom suggestion.
+    doc = _doc_model()
+    doc.content = {"type": "doc", "content": [
+        {"type": "section", "attrs": {"sectionId": "sec_real"}, "content": []},
+    ]}
+    session = AsyncMock()
+    session.add = MagicMock()
+    action_data = {
+        "type": "rewrite_section",
+        "params": {"section_id": "sec_bogus", "content": "Nuovo testo"},
+    }
+
+    res = await _handle_document_action(action_data, doc, session, _user(), None, "")
+    assert res == (None, None)
 
 
 @pytest.mark.asyncio

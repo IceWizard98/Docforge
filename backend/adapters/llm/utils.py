@@ -5,6 +5,14 @@ import re
 logger = logging.getLogger(__name__)
 
 
+class StructuredOutputError(ValueError):
+    """Raised when an LLM response can't be parsed into a JSON object.
+
+    Subclasses ValueError so existing `except ValueError` handlers still catch it,
+    while callers that need to react specifically (e.g. fall back to plain prose)
+    can branch on the type instead of matching the message text."""
+
+
 def extract_json(text: str) -> dict:
     """Extract JSON dict from LLM response text.
 
@@ -45,7 +53,7 @@ def extract_json(text: str) -> dict:
 
     preview = text[:300].replace("\n", "\\n")
     logger.error("Could not extract JSON from response: %s", preview)
-    raise ValueError("Could not extract valid JSON from LLM response")
+    raise StructuredOutputError("Could not extract valid JSON from LLM response")
 
 
 def extract_action_from_reply(text: str) -> dict | None:

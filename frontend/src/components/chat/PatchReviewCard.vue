@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Check, X, GitPullRequestArrow, Loader2 } from '@lucide/vue'
-import { acceptPatchOperation, rejectPatchOperation, applyPatchSet, extractApiError } from '@/api/client'
+import { acceptPatchOperation, rejectPatchOperation, applyPatchSet, getPatchSet, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 
 interface PatchOperation {
@@ -30,6 +30,27 @@ const statuses = ref<Record<string, string>>(
 const busy = ref<string | null>(null)
 const applying = ref(false)
 const applied = ref(false)
+
+// The operations in props are the snapshot persisted in the chat message (always
+// 'pending'). On (re)mount, reconcile with the backend so an already
+// accepted/applied/rejected patch set shows its real state instead of reappearing
+// as "to apply" after a page reload.
+onMounted(async () => {
+  try {
+    const ps = await getPatchSet(props.patchSetId)
+    const merged = { ...statuses.value }
+    for (const op of ps.operations || []) {
+      // Only UPGRADE pending -> a real decision; never downgrade a decision the
+      // user just made locally while this lookup was in flight.
+      const backend = op.status === 'accepted' || op.status === 'rejected' ? op.status : 'pending'
+      if (!(op.id in merged) || merged[op.id] === 'pending') merged[op.id] = backend
+    }
+    statuses.value = merged
+    if (ps.status === 'applied') applied.value = true
+  } catch {
+    // Best-effort: keep the stale snapshot if the lookup fails.
+  }
+})
 
 const acceptedCount = computed(
   () => Object.values(statuses.value).filter((s) => s === 'accepted').length,
@@ -76,6 +97,9 @@ async function accept(op: PatchOperation) {
   try {
     await acceptPatchOperation(props.patchSetId, op.id)
     statuses.value[op.id] = 'accepted'
+    // Accept applies the change to the document immediately server-side; refresh
+    // the editor now so the user sees it without having to click "Apply".
+    emit('applied')
   } catch (e: any) {
     toastError(extractErr(e))
   } finally {
@@ -128,9 +152,7 @@ async function apply() {
             {{ opLabel(op) }}
           </span>
           <div class="min-w-0 flex-1">
-            <div v-if="op.target_section" class="text-[10px] text-foreground/40 font-mono">
-              {{ op.target_section }}
-            </div>
+            <!-- The raw sectionId (sec_xxx) is internal; not shown to the user. -->
             <div class="text-xs text-foreground/80 whitespace-pre-wrap break-words line-clamp-4">
               {{ preview(op.content) || '—' }}
             </div>

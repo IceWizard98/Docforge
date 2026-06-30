@@ -9,6 +9,7 @@ from api.routes.chat import (
     _build_message_sources,
     _corpus_catalog,
     _document_outline,
+    _format_grounding_block,
     _format_transparency,
     _section_title,
     _write_citations,
@@ -16,6 +17,22 @@ from api.routes.chat import (
 from core.services.context import ContextChunk
 from core.services.drafting import build_section_paragraph as _section_paragraph
 from core.services.slot_retrieval import SlotContextPack, SlotFill
+
+
+class TestFormatGroundingBlock:
+    def test_frames_sources_as_style_reference_not_to_describe(self):
+        block = _format_grounding_block("CHUNK_TEXT")
+        low = block.lower()
+        # The source text is still fenced as untrusted data and embedded.
+        assert "CHUNK_TEXT" in block
+        # New framing: style-only reference, no copying, no describing, user data wins.
+        assert "stile" in low
+        assert "non copiar" in low
+        assert "non descriver" in low
+        assert "autoritativ" in low
+        # Old describe-the-source framing must be gone.
+        assert "fondare la risposta" not in low
+        assert "non inventare informazioni assenti dalle fonti" not in low
 
 
 def _section(sid: str, title: str | None = None, status: str = "draft", heading: str | None = None):
@@ -107,6 +124,26 @@ class TestGenerateChatReply:
         out = await _generate_chat_reply(provider, "sys", "user")
         assert out["action"]["type"] == "draft"
         assert out["reply"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_prose_response_used_as_reply_when_not_json(self):
+        # Local models often answer in plain prose, not JSON. extract_json then
+        # raises; instead of discarding the model's real answer behind a generic
+        # error, fall back to the prose as the visible reply.
+        from api.routes.chat import _generate_chat_reply
+
+        from adapters.llm.utils import StructuredOutputError
+        provider = SimpleNamespace(
+            generate_structured=AsyncMock(
+                side_effect=StructuredOutputError("Could not extract valid JSON from LLM response")
+            ),
+            generate=AsyncMock(return_value="Certo, ecco la mia risposta in prosa."),
+        )
+        out = await _generate_chat_reply(provider, "sys", "user")
+        assert out["reply"] == "Certo, ecco la mia risposta in prosa."
+        assert out["action"] is None
+        # Must NOT be the generic "non ho capito" fallback.
+        assert "non sono sicuro" not in out["reply"].lower()
 
 
 class TestBuildMessageSources:

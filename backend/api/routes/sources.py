@@ -17,6 +17,7 @@ from adapters.postgresql.pgvector import PgvectorAdapter
 from api.middleware.auth import AuthUser, get_current_user
 from api.routes.documents import _parse_to_prosemirror, _prosemirror_to_text
 from api.schemas.document import SourceDocumentResponse
+from config.settings import get_settings
 from core.services.search import HybridSearchService, RetrievalFilters
 from workers.classification import classify_document_task
 
@@ -83,6 +84,16 @@ async def search_sources(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    # Reject a mismatched/oversized vector up front: passing it to pgvector would
+    # surface as an opaque 500 (dimension mismatch) and an unbounded vector is a
+    # memory risk.
+    expected_dim = get_settings().embedding_dimension
+    if len(body.embedding) != expected_dim:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"embedding must have {expected_dim} dimensions, got {len(body.embedding)}",
+        )
+
     pgvector = PgvectorAdapter(session)
     service = HybridSearchService(pgvector)
 
@@ -189,7 +200,9 @@ async def upload_source(
 
     source_id = uuid.uuid4()
     storage = MinioStorageAdapter()
-    minio_path = f"source/{source_id}/{file.filename}"
+    # Path(...).name strips any directory components ('../') so a crafted filename
+    # can't escape the per-source key prefix.
+    minio_path = f"source/{source_id}/{Path(file.filename or 'upload').name}"
     try:
         stored_path = await storage.upload(
             path=minio_path,
@@ -274,14 +287,24 @@ async def download_source(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"File not available: {e}"
         )
 
-    ext = Path(source.filename).suffix.lower()
+    ext = Path(source.filename or "download").suffix.lower()
     media_type = _CONTENT_TYPES.get(ext, "application/octet-stream")
     from io import BytesIO
+    from urllib.parse import quote
+
+    # RFC 6266: an ASCII-safe quoted fallback (control chars/quotes stripped) plus a
+    # percent-encoded UTF-8 filename* — prevents header injection / quote-breakout
+    # from an attacker-controlled stored filename.
+    safe_name = Path(source.filename or "download").name
+    ascii_name = "".join(
+        c for c in safe_name if c.isascii() and c.isprintable() and c != '"'
+    ) or "download"
+    disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(safe_name)}"
 
     return StreamingResponse(
         BytesIO(data),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{source.filename}"'},
+        headers={"Content-Disposition": disposition},
     )
 
 

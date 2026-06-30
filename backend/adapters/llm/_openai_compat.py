@@ -74,6 +74,7 @@ class OpenAICompatProvider(LLMProvider):
         self.model = model
         self.base_url = base_url
         self._client: httpx.AsyncClient | None = None
+        self._client_loop: asyncio.AbstractEventLoop | None = None
 
     # --- per-provider hooks ---
     def _auth_headers(self) -> dict:
@@ -93,12 +94,19 @@ class OpenAICompatProvider(LLMProvider):
             raise ValueError(
                 f"{self.log_label} API key not configured. Set the relevant key in .env"
             )
-        if self._client is None:
+        # The provider is process-cached (lru_cache), but each Celery task runs its
+        # own asyncio.run() loop. An httpx client's connection pool is bound to the
+        # loop that created it; reusing it on a later task's loop raises
+        # "Event loop is closed". Recreate the client whenever the running loop
+        # differs (the old client's transports die with its closed loop).
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._client_loop is not loop:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=self._auth_headers(),
                 timeout=300.0,
             )
+            self._client_loop = loop
         return self._client
 
     def _validate_prompt(self, prompt: str, model: str) -> str:

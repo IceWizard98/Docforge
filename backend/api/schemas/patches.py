@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -18,8 +19,11 @@ class PatchOperationResponse(BaseModel):
     target_section: str | None = None
     target_clause: str | None = None
     target_path: list[str] = []
-    content: dict | None = None
+    # Replacement content varies by shape: a string (full section text), a node
+    # list, or a {"content": [...]} dict — keep it permissive so reads never 500.
+    content: Any = None
     status: str = "pending"
+    applied: bool = False
     sort_order: int = 0
     rationale: str | None = None
 
