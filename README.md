@@ -1,5 +1,12 @@
 # DocForge
 
+![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169e1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-dc382d?logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ed?logo=docker&logoColor=white)
+
 AI-first SaaS platform for intelligent enterprise document drafting, review, and collaboration.
 
 ## Architecture
@@ -214,10 +221,3 @@ just docker-up
 # Stop it
 just docker-down
 ```
-
-> Production topology (TLS edge, replicas, one-shot migrations) is not committed
-> yet — it will be added in a dedicated compose file when we deploy.
-
-## License
-
-Proprietary — All rights reserved.
