@@ -136,6 +136,32 @@ class OpenAICompatProvider(LLMProvider):
             raise ValueError("LLM response missing 'content' in message")
         return content
 
+    async def _generate_content(
+        self, payload: dict, fallback_payload: dict | None = None
+    ) -> str:
+        """POST and return the message content, recovering from blank content.
+
+        Heavy quantized local models (gemma4:12b) intermittently return an empty
+        string when forced into JSON mode (``response_format``). When that happens
+        we re-ask ONCE with ``fallback_payload`` (the same request without the JSON
+        constraint) — these models emit reliable prose/fenced-JSON in plain mode,
+        which extract_json then parses. One extra call, not several, so a slow 12B
+        model doesn't blow the request timeout."""
+        content = self._validate_response(
+            await self._post_with_retry(self.completions_path, payload)
+        )
+        if (not content or not content.strip()) and fallback_payload is not None:
+            logger.warning("%s returned empty content; retrying in plain mode", self.log_label)
+            content = self._validate_response(
+                await self._post_with_retry(self.completions_path, fallback_payload)
+            )
+        elif not content or not content.strip():
+            logger.warning("%s returned empty content; retrying once", self.log_label)
+            content = self._validate_response(
+                await self._post_with_retry(self.completions_path, payload)
+            )
+        return content
+
     async def _post_with_retry(self, url: str, json_payload: dict, max_retries: int = 3) -> dict:
         client = await self._get_client()
         last_exc = None
@@ -172,24 +198,25 @@ class OpenAICompatProvider(LLMProvider):
             "max_tokens": cfg.max_tokens,
             **self._base_extra(),
         }
-        data = await self._post_with_retry(self.completions_path, payload)
-        return self._validate_response(data)
+        return await self._generate_content(payload)
 
     async def generate_structured(
         self, prompt: str, response_model: type, config: LLMConfig | None = None
     ) -> dict:
         cfg = config or LLMConfig()
         model = cfg.model or self.model
-        payload = {
+        base = {
             "model": model,
             "messages": [{"role": "user", "content": self._validate_prompt(prompt, model)}],
             "temperature": cfg.temperature,
             "max_tokens": cfg.max_tokens,
             **self._base_extra(),
-            **self._structured_extra(),
         }
-        data = await self._post_with_retry(self.completions_path, payload)
-        return extract_json(self._validate_response(data))
+        structured = {**base, **self._structured_extra()}
+        # base (no response_format) is the plain-mode fallback: gemma4:12b returns
+        # empty under json_object but reliable fenced JSON in plain mode, which
+        # extract_json parses.
+        return extract_json(await self._generate_content(structured, fallback_payload=base))
 
     async def generate_with_tools(
         self, messages: list[dict], tools: list[dict], config: LLMConfig | None = None

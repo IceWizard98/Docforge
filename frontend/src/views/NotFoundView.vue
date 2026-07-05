@@ -16,7 +16,7 @@ import { FileQuestion } from '@lucide/vue'
       </p>
       <router-link
         to="/workspace/default"
-        class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150"
+        class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-primary text-white hover:bg-primary-light transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
       >
         Torna al workspace
       </router-link>

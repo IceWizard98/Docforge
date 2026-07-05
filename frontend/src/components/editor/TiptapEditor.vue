@@ -89,7 +89,7 @@ const editor = useEditor({
   extensions,
   editorProps: {
     attributes: {
-      class: 'prose prose-sm max-w-none focus:outline-none min-h-[500px] p-6',
+      class: 'prose prose-sm max-w-none focus:outline-none min-h-[240px] md:min-h-[500px] p-4 md:p-6',
     },
   },
   onUpdate: () => {
@@ -168,11 +168,21 @@ function scrollToSection(sectionId: string) {
   })
   if (foundPos !== null) {
     try {
-      const domPos = editor.value.view.domAtPos(foundPos)
-      const el = domPos.node.nodeType === Node.TEXT_NODE
-        ? (domPos.node.parentElement as HTMLElement)
-        : (domPos.node as HTMLElement)
-      if (el) {
+      // nodeDOM(pos) returns the section node's own DOM element. domAtPos(pos) at a
+      // node boundary resolves to the content root / a text node at offset 0, whose
+      // scrollIntoView jumps to the top of the document instead of the section.
+      let el = editor.value.view.nodeDOM(foundPos) as HTMLElement | null
+      if (!el || el.nodeType !== Node.ELEMENT_NODE) {
+        // Fallback: look just inside the section (foundPos + 1) and climb to the
+        // nearest section wrapper element.
+        const domPos = editor.value.view.domAtPos(foundPos + 1)
+        const raw = domPos.node.nodeType === Node.TEXT_NODE
+          ? domPos.node.parentElement
+          : (domPos.node as HTMLElement)
+        el = (raw?.closest('.section-node, [data-section-id], [data-type="section"]') as HTMLElement)
+          || raw
+      }
+      if (el && typeof el.scrollIntoView === 'function') {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     } catch (e) {

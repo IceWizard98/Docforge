@@ -162,6 +162,26 @@ export async function register(
   return { token, user: mapAuthUser(user) }
 }
 
+export interface ProfileUser {
+  id: string
+  email: string
+  displayName: string
+  role: string
+}
+
+// PATCH /auth/me — update the current user's display name. Backend returns
+// {id, email, display_name, role} (snake_case); map display_name → displayName.
+export async function updateProfile(displayName: string): Promise<ProfileUser> {
+  const response = await apiClient.patch('/auth/me', { display_name: displayName })
+  const u = response.data
+  return {
+    id: u?.id,
+    email: u?.email,
+    displayName: u?.display_name ?? u?.displayName ?? '',
+    role: u?.role ?? '',
+  }
+}
+
 // NOTE: JWT stored in localStorage is XSS-vulnerable.
 // For production, migrate to httpOnly cookies for better security.
 
@@ -178,6 +198,36 @@ export async function listDocuments(): Promise<DocumentResponse[]> {
   const response = await apiClient.get('/documents')
   const body = response.data as { data: DocumentResponse[]; meta: object }
   return body.data
+}
+
+export interface PagedDocuments {
+  data: DocumentResponse[]
+  total: number
+  page: number
+  perPage: number
+}
+
+export async function listDocumentsPaged(opts: {
+  page?: number
+  perPage?: number
+  search?: string
+} = {}): Promise<PagedDocuments> {
+  const params: Record<string, string | number> = {
+    page: opts.page ?? 1,
+    per_page: opts.perPage ?? 12,
+  }
+  if (opts.search && opts.search.trim()) params.search = opts.search.trim()
+  const response = await apiClient.get('/documents', { params })
+  const body = response.data as {
+    data: DocumentResponse[]
+    meta: { page: number; per_page: number; total: number }
+  }
+  return {
+    data: body.data,
+    total: body.meta?.total ?? body.data.length,
+    page: body.meta?.page ?? 1,
+    perPage: body.meta?.per_page ?? (opts.perPage ?? 12),
+  }
 }
 
 export async function createDocument(title: string, docType = ''): Promise<DocumentResponse> {
@@ -325,6 +375,31 @@ export async function saveDocumentVersion(documentId: string): Promise<DocumentR
   return response.data
 }
 
+export interface DocumentVersionItem {
+  version: number
+  createdAt: string
+  createdBy: string
+}
+
+// GET /documents/{id}/versions — snapshots, newest first. Backend sends
+// {version, created_at, created_by}; map to camelCase.
+export async function listDocumentVersions(documentId: string): Promise<DocumentVersionItem[]> {
+  const response = await apiClient.get<Array<{ version: number; created_at: string; created_by: string }>>(
+    `/documents/${documentId}/versions`,
+  )
+  return response.data.map((v) => ({
+    version: v.version,
+    createdAt: v.created_at ?? '',
+    createdBy: v.created_by ?? '',
+  }))
+}
+
+// POST /documents/{id}/versions/{version}/restore — returns the updated document.
+export async function restoreDocumentVersion(documentId: string, version: number): Promise<DocumentResponse> {
+  const response = await apiClient.post<DocumentResponse>(`/documents/${documentId}/versions/${version}/restore`)
+  return response.data
+}
+
 export async function diffDocumentVersion(documentId: string, v1: number, v2?: number): Promise<any> {
   const response = await apiClient.get(`/documents/${documentId}/diff`, { params: { v1, v2 } })
   return response.data
@@ -401,6 +476,66 @@ export async function deleteSource(sourceId: string): Promise<void> {
   await apiClient.delete(`/sources/${sourceId}`)
 }
 
+// POST /sources/reindex-all (202) — re-chunk + re-embed every source the user owns.
+export async function reindexAllSources(): Promise<{ status: string; count: number }> {
+  const resp = await apiClient.post('/sources/reindex-all')
+  return resp.data
+}
+
+// A corpus source plus whether it's excluded from THIS document's RAG retrieval.
+export interface DocumentSourceItem extends SourceDocumentResponse {
+  excluded: boolean
+}
+
+// GET /documents/{id}/sources — the user's whole corpus, each flagged excluded or not.
+export async function listDocumentSources(documentId: string): Promise<DocumentSourceItem[]> {
+  const resp = await apiClient.get(`/documents/${documentId}/sources`)
+  return resp.data
+}
+
+// PUT .../exclusion (204) — exclude a source from this document's retrieval. Idempotent.
+export async function excludeDocumentSource(documentId: string, sourceId: string): Promise<void> {
+  await apiClient.put(`/documents/${documentId}/sources/${sourceId}/exclusion`)
+}
+
+// DELETE .../exclusion (204) — restore a previously excluded source. Idempotent.
+export async function includeDocumentSource(documentId: string, sourceId: string): Promise<void> {
+  await apiClient.delete(`/documents/${documentId}/sources/${sourceId}/exclusion`)
+}
+
+export interface ExportResponse {
+  id: string
+  document_id: string
+  format: string
+  status: string // processing | completed | failed
+  file_key: string | null
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+// POST /exports/documents/{id}/export (202) — kick off an async export job.
+export async function createExport(
+  documentId: string,
+  format: 'pdf' | 'docx' | 'md',
+  templateId?: string,
+): Promise<ExportResponse> {
+  const body: { format: string; template_id?: string } = { format }
+  if (templateId) body.template_id = templateId
+  const resp = await apiClient.post(`/exports/documents/${documentId}/export`, body)
+  return resp.data
+}
+
+export async function getExport(exportId: string): Promise<ExportResponse> {
+  const resp = await apiClient.get(`/exports/${exportId}`)
+  return resp.data
+}
+
+export async function downloadExport(exportId: string): Promise<Blob> {
+  const resp = await apiClient.get(`/exports/${exportId}/download`, { responseType: 'blob' })
+  return resp.data
+}
+
 // --- Patch sets (surgical, reviewable edits) ---
 export async function applyPatchSet(patchId: string): Promise<{ status: string; new_version: number }> {
   const resp = await apiClient.post(`/patches/${patchId}/apply`)
@@ -413,18 +548,42 @@ export interface TemplateResponse {
   description?: string
   content?: any
   category?: string
-  createdAt?: string
-  updatedAt?: string
+  doc_type?: string
+  created_at?: string
+  updated_at?: string
+  hasFile: boolean
+}
+
+// Backend sends has_file (snake_case); expose it as hasFile while keeping the
+// snake_case date fields the views already read.
+function mapTemplate(t: any): TemplateResponse {
+  return { ...t, hasFile: t.has_file ?? t.hasFile ?? false }
 }
 
 export async function listTemplates(params?: { category?: string; doc_type?: string }): Promise<{ data: TemplateResponse[] }> {
   const resp = await apiClient.get('/templates', { params })
-  return resp.data
+  return { data: (resp.data.data ?? resp.data ?? []).map(mapTemplate) }
 }
 
 export async function createTemplate(data: { name: string; description?: string; content?: any; category?: string }): Promise<TemplateResponse> {
   const resp = await apiClient.post('/templates', data)
-  return resp.data
+  return mapTemplate(resp.data)
+}
+
+// POST /templates/upload (multipart) — create a template backed by a .docx file.
+export async function uploadTemplate(
+  file: File,
+  meta: { name: string; description?: string; docType?: string },
+): Promise<TemplateResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('name', meta.name)
+  if (meta.description) formData.append('description', meta.description)
+  if (meta.docType) formData.append('doc_type', meta.docType)
+  const resp = await apiClient.post('/templates/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return mapTemplate(resp.data)
 }
 
 export async function getTemplate(id: string): Promise<TemplateResponse> {
@@ -512,6 +671,33 @@ export interface PatchSetResponse {
 export async function getPatchSet(patchId: string): Promise<PatchSetResponse> {
   const response = await apiClient.get<PatchSetResponse>(`/patches/${patchId}`)
   return response.data
+}
+
+// --- Document validation ---
+export interface ValidationIssue {
+  type: string
+  severity: string // error | warning | info
+  section_id?: string | null
+  clause_id?: string | null
+  message: string
+}
+
+export interface ValidationReport {
+  document_id: string
+  version: number
+  passed: boolean
+  score: number
+  issues: ValidationIssue[]
+  summary: string
+  issues_grouped?: Record<string, ValidationIssue[]> | null
+  created_at?: string | null
+}
+
+// POST /documents/{id}/validate — run the full validation pass (structure + LLM)
+// and return the scored report. Served by the validation router (own /documents prefix).
+export async function validateDocument(docId: string): Promise<ValidationReport> {
+  const resp = await apiClient.post<ValidationReport>(`/documents/${docId}/validate`)
+  return resp.data
 }
 
 export async function acceptPatchOperation(patchId: string, operationId: string): Promise<any> {

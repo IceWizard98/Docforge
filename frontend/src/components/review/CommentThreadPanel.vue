@@ -3,7 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { format } from 'date-fns'
 import { MessageSquare, Check, Reply, X } from '@lucide/vue'
 import { listComments, createComment, resolveComment } from '@/api/client'
+import { useToast } from '@/composables/useToast'
 import type { Comment } from '@/types/document'
+
+const toast = useToast()
 import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
@@ -61,6 +64,7 @@ async function handleResolve(commentId: string) {
     )
   } catch (e) {
     console.error('Failed to resolve comment', e)
+    toast.error('Impossibile risolvere il commento')
   }
 }
 
@@ -74,6 +78,7 @@ async function handleAddReply(threadId: string) {
     replyTexts.value[threadId] = ''
   } catch (e) {
     console.error('Failed to add reply', e)
+    toast.error('Invio della risposta fallito')
   } finally {
     submitting.value = false
   }
@@ -89,6 +94,7 @@ async function handleAddComment() {
     newCommentText.value = ''
   } catch (e) {
     console.error('Failed to add comment', e)
+    toast.error('Invio del commento fallito')
   } finally {
     submitting.value = false
   }

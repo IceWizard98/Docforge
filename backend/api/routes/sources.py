@@ -17,6 +17,7 @@ from adapters.postgresql.pgvector import PgvectorAdapter
 from api.middleware.auth import AuthUser, get_current_user
 from api.routes.documents import _parse_to_prosemirror, _prosemirror_to_text
 from api.schemas.document import SourceDocumentResponse
+from api.upload_validation import read_validated_upload
 from config.settings import get_settings
 from core.services.search import HybridSearchService, RetrievalFilters
 from workers.classification import classify_document_task
@@ -26,7 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -169,26 +169,7 @@ async def upload_source(
     Unlike /documents/upload this does NOT create an editable Document — it only
     registers a SourceDocument and triggers parsing/classification/embedding.
     """
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No filename provided")
-
-    ext = Path(file.filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type '{ext}'",
-        )
-
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot upload empty file"
-        )
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File exceeds 50 MB limit",
-        )
+    ext, file_bytes = await read_validated_upload(file, ALLOWED_EXTENSIONS)
 
     try:
         prosemirror_content = _parse_to_prosemirror(file_bytes, ext)

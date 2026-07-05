@@ -31,6 +31,9 @@ class RetrievalFilters:
     confidence_min: float | None = None
     # Restrict retrieval to a single owner's sources (per-user corpus isolation).
     owner_id: str | None = None
+    # Drop these source documents from retrieval (per-document exclusion). Chunks
+    # with no source_document_id are kept (see the IS NULL guard in the adapter).
+    excluded_source_ids: list[str] | None = None
 
 
 @dataclass

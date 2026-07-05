@@ -2,6 +2,7 @@
 import { RouterView } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
 import ToastContainer from '@/components/common/ToastContainer.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useThemeStore } from '@/stores/themeStore'
 
 const themeStore = useThemeStore()
@@ -22,5 +23,6 @@ const themeStore = useThemeStore()
       </template>
     </RouterView>
     <ToastContainer />
+    <ConfirmDialog />
   </div>
 </template>

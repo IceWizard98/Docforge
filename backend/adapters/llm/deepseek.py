@@ -11,7 +11,7 @@ class DeepSeekProvider(OpenAICompatProvider):
     }
     default_max_input_tokens = 64000
 
-    def __init__(self, api_key: str = "", model: str = "deepseek-chat", base_url: str = ""):
+    def __init__(self, api_key: str = "", model: str = "", base_url: str = ""):
         settings = get_settings()
         super().__init__(
             api_key=api_key or settings.deepseek_api_key,

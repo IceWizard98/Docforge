@@ -109,7 +109,16 @@ class TestDraftService:
     @pytest.mark.asyncio
     async def test_generate_spec_with_empty_messages(self):
         spec = await self.service.generate_spec("chat_456", [])
-        assert spec["title"] == "Draft from chat chat_456"
+        # niente brief -> titolo italiano di default, non slug tecnici
+        assert spec["title"] == "Nuova bozza"
+
+    @pytest.mark.asyncio
+    async def test_generate_spec_fallback_title_from_brief(self):
+        messages = [{"role": "user", "content": "Analisi funzionale per il progetto Zeta di Athenor"}]
+        spec = await self.service.generate_spec("chat_789", messages)
+        # fallback (nessun LLM): il titolo deriva dal brief, leggibile dall'utente
+        assert spec["title"].startswith("Bozza: Analisi funzionale per il progetto Zeta")
+        assert "chat_789" not in spec["title"]
 
     def _make_context(self, chunks_data: list[dict]) -> ContextPack:
         chunks = [
@@ -514,6 +523,68 @@ class TestDraftService:
         context = self._make_context([{"text": "legal"}])
         result = await self.service.generate_section(spec, section, context)
         assert "NON rifiutare" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_generate_section_notes_in_prompt_with_label(self):
+        # Two-phase mode: the extracted notes go into the context slot under an
+        # explicit APPUNTI label; the raw corpus chunk text must NOT appear.
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = lambda prompt, *a, **k: prompt
+        self.service._llm = mock_llm
+        notes_pack = self._make_context(
+            [{"chunk_id": "chk_1", "document_id": "doc_1", "text": "RAW SOURCE TEXT"}]
+        )
+        result = await self.service.generate_section(
+            {"title": "T", "brief": "b"},
+            {"section_id": "s", "title": "Parti"},
+            context_pack=None,
+            ground=False,
+            notes="- usa formule standard\n- struttura in commi numerati",
+            notes_pack=notes_pack,
+        )
+        assert "APPUNTI ESTRATTI DALLE FONTI" in result["content"]
+        assert "usa formule standard" in result["content"]
+        assert "RAW SOURCE TEXT" not in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_generate_section_notes_provenance_and_chunk_ids_from_pack(self):
+        # Provenance + consumed chunk ids come from notes_pack, so promote-time
+        # ProvenanceLink rows and cross-section dedup keep working in two-phase mode.
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "Le parti sono X e Y."
+        self.service._llm = mock_llm
+        notes_pack = self._make_context(
+            [{"chunk_id": "chk_9", "document_id": "doc_z", "text": "t"}]
+        )
+        result = await self.service.generate_section(
+            {"title": "T", "brief": "b"},
+            {"section_id": "s", "title": "Parti"},
+            context_pack=None,
+            ground=False,
+            notes="- appunti di stile",
+            notes_pack=notes_pack,
+        )
+        assert result["context_chunk_ids"] == ["chk_9"]
+        assert result["provenance"][0]["chunk_id"] == "chk_9"
+        assert result["provenance"][0]["source_doc_id"] == "doc_z"
+        assert result["runs"][0]["provenance"]["chunk_id"] == "chk_9"
+
+    @pytest.mark.asyncio
+    async def test_generate_section_empty_notes_identical_to_brief_only(self):
+        # Anti-contamination regression guard: notes="" must yield a result byte-
+        # identical to the current brief-only (ground=False) behavior.
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = lambda prompt, *a, **k: prompt
+        self.service._llm = mock_llm
+        spec = {"title": "Contratto", "brief": "Luis e Athenor Srl, 61k, 1 anno"}
+        section = {"section_id": "s", "title": "Parti"}
+        baseline = await self.service.generate_section(
+            spec, section, context_pack=None, ground=False
+        )
+        with_empty = await self.service.generate_section(
+            spec, section, context_pack=None, ground=False, notes="", notes_pack=None
+        )
+        assert with_empty == baseline
 
     @pytest.mark.asyncio
     async def test_generate_section_returns_context_chunk_ids(self):

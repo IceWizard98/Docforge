@@ -15,6 +15,7 @@ from typing import Literal
 
 from core.services.context import ContextChunk, ContextPackService
 from core.services.scoring import Bucket, bucket
+from core.services.search import RetrievalFilters
 from core.services.slot_schema import SlotSchemaService, get_slot_schema_service
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class SlotRetrievalService:
         self._slots = slot_service or get_slot_schema_service()
 
     async def build_slot_context(
-        self, doc_type: str, top_k: int = 3
+        self, doc_type: str, top_k: int = 3, filters: RetrievalFilters | None = None
     ) -> SlotContextPack:
         schema = self._slots.get(doc_type)
         if schema is None:
@@ -67,11 +68,12 @@ class SlotRetrievalService:
 
         # Search the whole corpus per slot: evidence for a slot (e.g. "parties")
         # may live in any source type, not only documents of this doc_type.
+        # `filters` carries owner isolation and per-document exclusions only.
         async def _retrieve(slot) -> tuple[str, list[ContextChunk]]:
             query = slot.retrieval_query_hint or slot.label
             try:
                 pack = await self._ctx.build_section_context(
-                    section_title=query, filters=None, top_k=top_k
+                    section_title=query, filters=filters, top_k=top_k
                 )
                 chunks = [c for src in pack.sources for c in src.chunks]
             except Exception:

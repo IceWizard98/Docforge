@@ -36,7 +36,7 @@ class TestExportService:
         ) as mock_docx:
             result = await self.service.export_docx(doc)
             assert result == b"docx-binary-data"
-            mock_docx.assert_called_once_with(doc)
+            mock_docx.assert_called_once_with(doc, template_bytes=None)
 
     @pytest.mark.asyncio
     async def test_export_pdf_with_empty_document(self):

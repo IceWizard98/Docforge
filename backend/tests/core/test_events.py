@@ -6,13 +6,10 @@ from core.events import (
     DocumentClassified,
     DocumentIndexed,
     DocumentParsed,
-    DocumentValidated,
     DomainEvent,
     DraftGenerated,
     ExportCompleted,
     PatchApplied,
-    PatchGenerated,
-    PatchValidated,
     SectionGenerated,
     SpecGenerated,
 )
@@ -134,19 +131,6 @@ class TestSectionGenerated:
         assert evt.section_id == "sec_1"
 
 
-class TestPatchGenerated:
-    def test_default_values(self):
-        evt = PatchGenerated()
-        _assert_event_fields(evt, PatchGenerated)
-        assert evt.patch_set_id == ""
-        assert evt.document_id == ""
-
-    def test_with_ids(self):
-        evt = PatchGenerated(patch_set_id="ps_1", document_id="doc_1")
-        assert evt.patch_set_id == "ps_1"
-        assert evt.document_id == "doc_1"
-
-
 class TestPatchApplied:
     def test_default_values(self):
         evt = PatchApplied()
@@ -160,37 +144,6 @@ class TestPatchApplied:
         assert evt.patch_set_id == "ps_1"
 
 
-class TestPatchValidated:
-    def test_default_values(self):
-        evt = PatchValidated()
-        _assert_event_fields(evt, PatchValidated)
-        assert evt.issues == []
-        assert evt.valid is False
-
-    def test_with_issues(self):
-        issues = [{"type": "missing_section", "section_id": "sec_1"}]
-        evt = PatchValidated(
-            patch_set_id="ps_1",
-            document_id="doc_1",
-            issues=issues,
-            valid=True,
-        )
-        assert evt.issues == issues
-        assert evt.valid is True
-        assert evt.patch_set_id == "ps_1"
-
-
-class TestDocumentValidated:
-    def test_default_values(self):
-        evt = DocumentValidated()
-        _assert_event_fields(evt, DocumentValidated)
-        assert evt.score == 0.0
-
-    def test_with_score(self):
-        evt = DocumentValidated(document_id="doc_1", version_number=2, score=85.5)
-        assert evt.score == 85.5
-        assert evt.version_number == 2
-        assert evt.document_id == "doc_1"
 
 
 class TestDocumentApproved:

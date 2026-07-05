@@ -4,7 +4,11 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from adapters.postgresql.models import DocumentModel, UserModel
+from adapters.postgresql.models import (
+    DocumentModel,
+    DocumentSourceExclusionModel,
+    UserModel,
+)
 from core.models.document import Document
 from core.models.user import User
 
@@ -16,6 +20,23 @@ def _ensure_uuid(value: str | UUID) -> UUID:
         return UUID(value)
     except (ValueError, AttributeError):
         raise ValueError(f"Invalid UUID value: {value!r}")
+
+
+async def excluded_source_ids(session: AsyncSession, document_id) -> list[str]:
+    """Source ids the user hid from this document's retrieval ([] when no doc).
+
+    Shared by chat retrieval (api/routes/chat.py) and draft generation
+    (workers/drafting.py) so the two paths can never disagree on which sources
+    are excluded — divergence would let excluded content resurface in drafts.
+    """
+    if not document_id:
+        return []
+    result = await session.execute(
+        select(DocumentSourceExclusionModel.source_document_id).where(
+            DocumentSourceExclusionModel.document_id == document_id
+        )
+    )
+    return [str(sid) for sid in result.scalars().all()]
 
 
 class UserRepository:
@@ -71,10 +92,10 @@ class DocumentRepository:
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
-    async def list_documents(
+    async def list_documents(  # noqa: PLR0913
         self, page: int = 1, per_page: int = 20,
         doc_type: str | None = None, status: str | None = None, tag: str | None = None,
-        owner_id: str | None = None,
+        owner_id: str | None = None, search: str | None = None,
     ) -> tuple[list[DocumentModel], int]:
         base = select(DocumentModel).where(DocumentModel.status != "archived")
         if owner_id is not None:
@@ -83,6 +104,11 @@ class DocumentRepository:
             base = base.where(DocumentModel.doc_type == doc_type)
         if status:
             base = base.where(DocumentModel.status == status)
+        if search and search.strip():
+            # Case-insensitive title substring; escape LIKE wildcards so a user
+            # typing % or _ searches literally.
+            term = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            base = base.where(func.lower(DocumentModel.title).like(f"%{term.lower()}%"))
         if tag:
             # tags is a plain JSON column; cast to JSONB so the @> containment
             # operator is valid (plain json has no contains/@> operator in PG).

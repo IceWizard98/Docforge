@@ -13,6 +13,7 @@ from api.routes.patches import router as patches_router
 from api.routes.sources import router as sources_router
 from api.routes.templates import router as templates_router
 from api.routes.validation import router as validation_router
+from config.logging import setup_logging
 from config.settings import get_settings
 
 logger = logging.getLogger("docforge")
@@ -20,6 +21,7 @@ settings = get_settings()
 
 
 def create_app() -> FastAPI:
+    setup_logging()
     # In production: refuse insecure defaults at boot rather than logging and serving.
     if settings.jwt_secret == "change-me-in-production":
         if settings.is_production:

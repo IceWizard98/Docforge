@@ -83,11 +83,11 @@ class AnthropicProvider(LLMProvider):
     supports_tools = True
 
     def __init__(
-        self, api_key: str = "", model: str = "claude-3-5-sonnet-20241022", base_url: str = ""
+        self, api_key: str = "", model: str = "", base_url: str = ""
     ):
         settings = get_settings()
         self.api_key = api_key or settings.anthropic_api_key
-        self.model = model
+        self.model = model or settings.anthropic_model
         self.base_url = base_url or settings.anthropic_base_url
         self._client: httpx.AsyncClient | None = None
         self._client_loop: asyncio.AbstractEventLoop | None = None

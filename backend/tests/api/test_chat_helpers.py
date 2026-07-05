@@ -1,13 +1,11 @@
 import uuid
-from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from api.routes.chat import (
     _build_message_sources,
-    _corpus_catalog,
     _document_outline,
     _format_grounding_block,
     _format_transparency,
@@ -69,33 +67,6 @@ def test_section_title_prefers_attrs_then_heading():
     assert _section_title(_section("s")) == "(senza titolo)"
 
 
-@pytest.mark.asyncio
-async def test_corpus_catalog_formats_sources():
-    src = SimpleNamespace(
-        filename="nda_acme.pdf", doc_type="contract", language="it",
-        tags=["nda", "acme"], created_at=datetime(2026, 1, 15),
-    )
-    result = MagicMock()
-    result.scalars.return_value.all.return_value = [src]
-    session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
-
-    catalog = await _corpus_catalog(session)
-    assert "nda_acme.pdf" in catalog
-    assert "contract" in catalog
-    assert "nda, acme" in catalog
-    assert "2026-01-15" in catalog
-
-
-@pytest.mark.asyncio
-async def test_corpus_catalog_empty_when_no_sources():
-    result = MagicMock()
-    result.scalars.return_value.all.return_value = []
-    session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
-    assert await _corpus_catalog(session) == ""
-
-
 # --- Step 1: build SourceRef list from collected chunks ----------------------
 
 class TestGenerateChatReply:
@@ -130,9 +101,8 @@ class TestGenerateChatReply:
         # Local models often answer in plain prose, not JSON. extract_json then
         # raises; instead of discarding the model's real answer behind a generic
         # error, fall back to the prose as the visible reply.
-        from api.routes.chat import _generate_chat_reply
-
         from adapters.llm.utils import StructuredOutputError
+        from api.routes.chat import _generate_chat_reply
         provider = SimpleNamespace(
             generate_structured=AsyncMock(
                 side_effect=StructuredOutputError("Could not extract valid JSON from LLM response")
@@ -353,3 +323,58 @@ class TestSectionParagraph:
         sec = {"runs": [{"text": "", "provenance": None, "placeholder": None}]}
         node = _section_paragraph(sec)
         assert node["content"] == []
+
+
+class TestExcludedSourceIds:
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_document(self):
+        from api.routes.chat import _excluded_source_ids
+
+        session = AsyncMock()
+        session.execute = AsyncMock()
+        assert await _excluded_source_ids(session, None) == []
+        session.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_returns_string_ids_for_document(self):
+        from api.routes.chat import _excluded_source_ids
+
+        sid1, sid2 = uuid.uuid4(), uuid.uuid4()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [sid1, sid2]
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+
+        out = await _excluded_source_ids(session, uuid.uuid4())
+        assert out == [str(sid1), str(sid2)]
+
+    @pytest.mark.asyncio
+    async def test_exclusions_land_on_retrieval_filters(self):
+        # The retrieval helper must carry exclusions (and owner_id) into the
+        # RetrievalFilters it hands to the context service.
+        import api.routes.chat as chat_mod
+
+        captured = {}
+
+        class _FakePack:
+            sources = []
+
+        class _FakeContextSvc:
+            def __init__(self, *a, **k):
+                pass
+
+            async def build_section_context(self, section_title, filters=None):
+                captured["filters"] = filters
+                return _FakePack()
+
+        session = AsyncMock()
+        with (
+            patch.object(chat_mod, "PgvectorAdapter", lambda s: MagicMock()),
+            patch.object(chat_mod, "ContextPackService", _FakeContextSvc),
+        ):
+            await chat_mod._retrieve_source_context(
+                session, "query", owner_id="owner-1",
+                excluded_source_ids=["ex-1", "ex-2"],
+            )
+        assert captured["filters"].owner_id == "owner-1"
+        assert captured["filters"].excluded_source_ids == ["ex-1", "ex-2"]

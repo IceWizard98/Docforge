@@ -1,17 +1,15 @@
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import DocumentModel
+from adapters.postgresql.models import AuditEventModel, DocumentModel, TemplateModel
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.exports import ExportCreate, ExportResponse
 from workers.export import export_document_task
-
-_EXPORT_STATUS: dict[str, str] = {}
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
@@ -40,16 +38,40 @@ async def create_export(
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    export_id = uuid4()
-    from adapters.postgresql.models import AuditEventModel
+    # Optional template: must be visible to the caller (public or own) and carry a
+    # real DOCX file. Its MinIO key travels to the worker as a plain string.
+    template_file_key: str | None = None
+    if body.template_id is not None:
+        owner = UUID(current_user.user_id)
+        tpl_result = await session.execute(
+            select(TemplateModel).where(
+                TemplateModel.id == body.template_id,
+                or_(TemplateModel.is_public.is_(True), TemplateModel.created_by == owner),
+            )
+        )
+        template = tpl_result.scalar_one_or_none()
+        if template is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Template not found"
+            )
+        if not template.file_key:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="il template non ha un file DOCX",
+            )
+        template_file_key = template.file_key
 
+    export_id = uuid4()
+    payload: dict = {"format": body.format, "status": "processing"}
+    if body.template_id is not None:
+        payload["template_id"] = str(body.template_id)
     audit = AuditEventModel(
         id=export_id,
         user_id=UUID(current_user.user_id),
         event_type="export_created",
         entity_type="document",
         entity_id=str(doc_id),
-        payload={"format": body.format, "status": "processing"},
+        payload=payload,
     )
     session.add(audit)
     try:
@@ -61,13 +83,16 @@ async def create_export(
             detail="Export already exists",
         )
 
-    _EXPORT_STATUS[str(export_id)] = "processing"
-
-    doc_data = {"id": str(doc_id), "title": doc.title, "content": doc.content, "version": doc.version}
+    doc_data = {
+        "id": str(doc_id),
+        "title": doc.title,
+        "content": doc.content,
+        "version": doc.version,
+    }
     # countdown gives the request transaction time to commit before the worker runs,
     # so the task doesn't race ahead of the audit/export row it expects.
     export_document_task.apply_async(
-        (str(export_id), str(doc_id), doc_data, body.format), countdown=1
+        (str(export_id), str(doc_id), doc_data, body.format, template_file_key), countdown=1
     )
 
     return ExportResponse(
@@ -87,8 +112,6 @@ async def get_export(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    from adapters.postgresql.models import AuditEventModel
-
     result = await session.execute(
         select(AuditEventModel).where(
             AuditEventModel.id == export_id,
@@ -102,7 +125,7 @@ async def get_export(
 
     payload = audit.payload or {}
     fmt = payload.get("format", "pdf")
-    job_status = payload.get("status", _EXPORT_STATUS.get(str(export_id), "processing"))
+    job_status = payload.get("status", "processing")
     file_key = payload.get("file_key", "")
     if not file_key and job_status == "completed":
         file_key = f"exports/{audit.entity_id}/export.{fmt}"
@@ -124,8 +147,6 @@ async def download_export(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    from adapters.postgresql.models import AuditEventModel
-
     result = await session.execute(
         select(AuditEventModel).where(
             AuditEventModel.id == export_id,

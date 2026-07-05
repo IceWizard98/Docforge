@@ -64,6 +64,19 @@ class TestSlotRetrievalHappy:
         for call in ctx.build_section_context.await_args_list:
             assert call.kwargs.get("filters") is None
 
+    @pytest.mark.asyncio
+    async def test_forwards_caller_filters(self):
+        # owner isolation / per-document exclusions must reach every slot query
+        from core.services.search import RetrievalFilters
+
+        ctx = _ctx_returning({})
+        svc = SlotRetrievalService(context_service=ctx)
+        filters = RetrievalFilters(owner_id="user-1", excluded_source_ids=["src-1"])
+        await svc.build_slot_context("nda", filters=filters)
+        assert ctx.build_section_context.await_args_list
+        for call in ctx.build_section_context.await_args_list:
+            assert call.kwargs.get("filters") is filters
+
 
 class TestSlotRetrievalEdge:
     @pytest.mark.asyncio

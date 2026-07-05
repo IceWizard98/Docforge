@@ -78,7 +78,7 @@ async def validate_document(
         )
 
     return ValidationReport(
-        document_id=doc_id,
+        document_id=str(doc_id),
         version=doc.version,
         passed=report["passed"],
         score=report["score"],
@@ -129,7 +129,7 @@ async def get_validation(
             logger.exception("LLM validation unavailable for doc %s", doc_id)
 
     return ValidationReport(
-        document_id=doc_id,
+        document_id=str(doc_id),
         version=doc.version,
         passed=report["passed"],
         score=report["score"],

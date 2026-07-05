@@ -11,11 +11,14 @@ import { listAllSources,
   deleteSource,
   type SourceDocumentResponse, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import { useDocTypeLabel } from '@/composables/useDocTypeLabel'
+import { saveBlob } from '@/utils/download'
 
 const { success, error: toastError } = useToast()
 const { t } = useI18n({ useScope: 'global' })
 const docTypeLabel = useDocTypeLabel()
+const { confirm } = useConfirm()
 
 const sources = ref<SourceDocumentResponse[]>([])
 const loading = ref(true)
@@ -89,19 +92,20 @@ async function onFileSelected(event: Event) {
 async function onDownload(source: SourceDocumentResponse) {
   try {
     const blob = await downloadSource(source.id)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = source.filename
-    a.click()
-    URL.revokeObjectURL(url)
+    saveBlob(blob, source.filename)
   } catch (e: any) {
     toastError(extractError(e))
   }
 }
 
 async function onDelete(source: SourceDocumentResponse) {
-  if (!confirm(`Eliminare "${source.filename}" dalla libreria?`)) return
+  const ok = await confirm({
+    title: 'Elimina fonte',
+    message: `Eliminare "${source.filename}" dalla libreria?`,
+    confirmLabel: 'Elimina',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await deleteSource(source.id)
     sources.value = sources.value.filter((s) => s.id !== source.id)
@@ -125,16 +129,16 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl p-6">
-    <div class="flex items-center gap-3 mb-6">
-      <BookOpen class="h-6 w-6 text-primary" />
-      <div>
+  <div class="mx-auto max-w-5xl p-4 md:p-6">
+    <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
+      <BookOpen class="h-6 w-6 text-primary shrink-0" />
+      <div class="min-w-0">
         <h1 class="text-xl font-semibold text-foreground">Libreria fonti</h1>
         <p class="text-sm text-foreground/60">
           Documenti caricati e indicizzati, usati dall'AI per comporre nuovi documenti.
         </p>
       </div>
-      <div class="ml-auto flex items-center gap-2">
+      <div class="sm:ml-auto flex items-center gap-2 shrink-0">
         <button
           class="p-2 rounded-md text-foreground/60 hover:text-primary hover:bg-primary/8 transition-colors"
           title="Aggiorna"
@@ -143,7 +147,7 @@ onUnmounted(() => {
           <RefreshCw class="h-4 w-4" />
         </button>
         <button
-          class="flex items-center gap-2 px-3 py-2 text-sm rounded-md bg-primary text-white hover:bg-primary-light transition-colors disabled:opacity-50"
+          class="flex items-center gap-2 px-3 py-2 text-sm rounded-md bg-primary text-white hover:bg-primary-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           :disabled="uploading"
           @click="triggerUpload"
         >

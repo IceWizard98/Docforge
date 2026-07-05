@@ -1,11 +1,13 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
 
 class ExportCreate(BaseModel):
-    format: Literal["pdf", "docx"] = "pdf"
+    format: Literal["pdf", "docx", "md"] = "pdf"
+    template_id: UUID | None = None
 
 
 class ExportResponse(BaseModel):

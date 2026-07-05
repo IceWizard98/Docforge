@@ -79,6 +79,22 @@ class SourceDocumentModel(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class DocumentSourceExclusionModel(Base):
+    __tablename__ = "document_source_exclusions"
+
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("source_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class DocumentChunkModel(Base):
     __tablename__ = "document_chunks"
 
@@ -178,6 +194,8 @@ class TemplateModel(Base):
     content = Column(JSONB, nullable=False)
     category = Column(String(100), nullable=True)
     is_public = Column(Boolean, default=False, nullable=False)
+    file_key = Column(String(500), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

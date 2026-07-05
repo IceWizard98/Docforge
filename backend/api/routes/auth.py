@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
 from passlib.hash import pbkdf2_sha256
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.postgresql.base import get_session
@@ -15,13 +15,16 @@ from adapters.postgresql.models import UserModel
 from adapters.postgresql.repositories import UserRepository
 from adapters.redis.client import RedisClient
 from api.middleware.auth import (
+    AuthUser,
     _decode_token,
     blacklist_token,
+    get_current_user,
 )
 from api.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
+    ProfileUpdate,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
@@ -198,6 +201,40 @@ async def login(
             display_name=user_model.display_name or "",
             role=user_model.role,
         ),
+    )
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    body: ProfileUpdate,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await session.execute(
+        select(UserModel).where(UserModel.id == UUID(current_user.user_id))
+    )
+    user_model = result.scalar_one_or_none()
+    if not user_model:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    user_model.display_name = body.display_name
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A database conflict occurred while updating your profile. Please try again.",
+        )
+
+    return UserResponse(
+        id=str(user_model.id),
+        email=user_model.email,
+        display_name=user_model.display_name or "",
+        role=user_model.role,
     )
 
 

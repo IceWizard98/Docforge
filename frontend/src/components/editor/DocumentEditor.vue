@@ -3,6 +3,7 @@ import { ref, shallowReactive, computed, onMounted, watch, watchEffect, nextTick
 import { useRoute, useRouter } from 'vue-router'
 import type { Editor } from '@tiptap/core'
 import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import TiptapEditor from './TiptapEditor.vue'
 import DocumentOutline from './DocumentOutline.vue'
 import ChatDock from '@/components/chat/ChatDock.vue'
@@ -10,13 +11,16 @@ import SuggestionReviewBar from '@/components/review/SuggestionReviewBar.vue'
 import DiffInspector from '@/components/review/DiffInspector.vue'
 import CommentThreadPanel from '@/components/review/CommentThreadPanel.vue'
 import SourceDocumentsPanel from '@/components/sources/SourceDocumentsPanel.vue'
+import ExportDialog from '@/components/editor/ExportDialog.vue'
+import ValidationDialog from '@/components/editor/ValidationDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ErrorMessage from '@/components/common/ErrorMessage.vue'
+import { onClickOutside } from '@vueuse/core'
 import { useEditorStore } from '@/stores/editorStore'
 import { useDocumentStore } from '@/stores/documentStore'
 import { useDocumentDiff } from '@/composables/useDocumentDiff'
-import { saveDocumentVersion, diffDocumentVersion } from '@/api/client'
-import { PanelLeftOpen, PanelLeftClose, Layers, MessageSquare, Save, Pencil, BookOpen, ArrowLeft, ChevronRight, FileText, X } from '@lucide/vue'
+import { saveDocumentVersion, diffDocumentVersion, listDocumentVersions, restoreDocumentVersion, type DocumentVersionItem } from '@/api/client'
+import { PanelLeftOpen, PanelLeftClose, Layers, MessageSquare, Save, History, Pencil, BookOpen, ArrowLeft, ChevronRight, FileText, Download, ShieldCheck, X } from '@lucide/vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +28,7 @@ const editorStore = useEditorStore()
 const documentStore = useDocumentStore()
 const editorRef = ref<InstanceType<typeof TiptapEditor> | null>(null)
 const toast = useToast()
+const { confirm } = useConfirm()
 const { summary: diffSummary, setDocuments } = useDocumentDiff()
 
 function modeFromRoute(): 'compose' | 'review' | 'diff' {
@@ -38,6 +43,8 @@ watch(() => route.name, () => { mode.value = modeFromRoute() })
 // Chat-first layout: the conversation is the primary surface; the document panel
 // (the "artifact") slides in on the right only when there is content to show.
 const showDocPanel = ref(false)
+const showExport = ref(false)
+const showValidation = ref(false)
 const docTab = ref<'editor' | 'sources' | 'comments' | 'diff'>('editor')
 
 const isReviewMode = computed(() => mode.value === 'review')
@@ -218,6 +225,58 @@ async function saveVersion() {
     savingVersion.value = false
   }
 }
+
+const showVersions = ref(false)
+const versions = ref<DocumentVersionItem[]>([])
+const loadingVersions = ref(false)
+const versionsMenuRef = ref<HTMLElement | null>(null)
+
+// Close the version-history popover when clicking anywhere outside it (the
+// trigger button lives inside the same wrapper, so its own toggle still works).
+onClickOutside(versionsMenuRef, () => { showVersions.value = false })
+
+function formatVersionDate(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d.getTime())
+    ? ''
+    : d.toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+async function toggleVersions() {
+  showVersions.value = !showVersions.value
+  if (!showVersions.value) return
+  loadingVersions.value = true
+  try {
+    versions.value = await listDocumentVersions(route.params.id as string)
+  } catch (e) {
+    console.error('Failed to load versions:', e)
+    toast.error('Caricamento versioni fallito')
+    showVersions.value = false
+  } finally {
+    loadingVersions.value = false
+  }
+}
+
+async function restoreVersion(version: number) {
+  const docId = route.params.id as string
+  if (!docId) return
+  const ok = await confirm({
+    title: 'Ripristina versione',
+    message: `Ripristinare la versione ${version}? La versione corrente verrà salvata prima del ripristino.`,
+    confirmLabel: 'Ripristina',
+  })
+  if (!ok) return
+  try {
+    await restoreDocumentVersion(docId, version)
+    await documentStore.fetchDocument(docId)
+    toast.success(`Versione ${version} ripristinata`)
+    showVersions.value = false
+  } catch (e) {
+    console.error('Failed to restore version:', e)
+    toast.error('Ripristino versione fallito')
+  }
+}
 </script>
 
 <template>
@@ -279,9 +338,18 @@ async function saveVersion() {
                lg:static lg:z-auto lg:w-[48%] lg:max-w-3xl lg:shadow-none xl:w-[46rem]"
       >
         <!-- Doc toolbar -->
-        <header class="h-12 shrink-0 border-b border-primary/10 bg-surface flex items-center gap-1 px-2">
+        <header class="h-12 shrink-0 border-b border-primary/10 bg-surface flex items-center gap-1 px-2 overflow-x-auto">
+          <!-- Mobile: back to chat (the panel is a full-screen overlay below lg) -->
+          <button
+            class="lg:hidden shrink-0 p-1.5 rounded-md text-foreground/60 hover:text-primary hover:bg-primary/8 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            title="Torna alla chat"
+            aria-label="Torna alla chat"
+            @click="showDocPanel = false"
+          >
+            <ArrowLeft class="w-4 h-4" />
+          </button>
           <!-- View tabs -->
-          <div class="flex items-center gap-0.5" role="tablist">
+          <div class="flex items-center gap-0.5 shrink-0" role="tablist">
             <button
               v-for="t in docTabs"
               :key="t.id"
@@ -297,7 +365,7 @@ async function saveVersion() {
             </button>
           </div>
 
-          <span class="flex-1" />
+          <span class="flex-1 hidden md:block" />
 
           <!-- Editor-only controls -->
           <template v-if="docTab === 'editor'">
@@ -312,14 +380,14 @@ async function saveVersion() {
             </button>
 
             <button
-              class="px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              class="shrink-0 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               :class="mode === 'compose' ? 'bg-primary/10 text-primary' : 'text-foreground/60 hover:text-primary hover:bg-primary/8'"
               @click="setMode('compose')"
             >
               Compose
             </button>
             <button
-              class="px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              class="shrink-0 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               :class="mode === 'review' ? 'bg-primary/10 text-primary' : 'text-foreground/60 hover:text-primary hover:bg-primary/8'"
               @click="setMode('review')"
             >
@@ -356,13 +424,69 @@ async function saveVersion() {
             >
               <Save class="w-4 h-4" />
             </button>
+
+            <button
+              class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              title="Esporta"
+              aria-label="Esporta il documento"
+              @click="showExport = true"
+            >
+              <Download class="w-4 h-4" />
+            </button>
+
+            <button
+              class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+              title="Valida documento"
+              aria-label="Valida il documento"
+              @click="showValidation = true"
+            >
+              <ShieldCheck class="w-4 h-4" />
+            </button>
+
+            <!-- Version history -->
+            <div ref="versionsMenuRef" class="relative">
+              <button
+                class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                :class="{ 'text-primary bg-primary/8': showVersions }"
+                title="Cronologia versioni"
+                aria-label="Mostra la cronologia delle versioni"
+                @click="toggleVersions"
+              >
+                <History class="w-4 h-4" />
+              </button>
+              <div
+                v-if="showVersions"
+                class="absolute right-0 top-full mt-1 w-64 max-h-72 overflow-y-auto rounded-md border border-primary/10 bg-card shadow-lg z-20 py-1"
+              >
+                <div v-if="loadingVersions" class="px-3 py-2 text-xs text-foreground/50">Caricamento…</div>
+                <div v-else-if="versions.length === 0" class="px-3 py-2 text-xs text-foreground/50">
+                  Nessuna versione salvata
+                </div>
+                <div
+                  v-for="v in versions"
+                  v-else
+                  :key="v.version"
+                  class="flex items-center justify-between gap-2 px-3 py-1.5 hover:bg-primary/5"
+                >
+                  <div class="min-w-0">
+                    <div class="text-xs font-medium text-foreground">Versione {{ v.version }}</div>
+                    <div class="text-[10px] text-foreground/40 truncate">{{ formatVersionDate(v.createdAt) }}</div>
+                  </div>
+                  <button
+                    class="text-[11px] font-medium text-primary hover:underline shrink-0 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none rounded"
+                    @click="restoreVersion(v.version)"
+                  >
+                    Ripristina
+                  </button>
+                </div>
+              </div>
+            </div>
           </template>
 
-          <span class="w-px h-5 bg-primary/10 mx-1" />
-
-          <!-- Close panel -->
+          <!-- Close panel (desktop; on mobile the left ArrowLeft handles it) -->
+          <span class="hidden lg:block w-px h-5 bg-primary/10 mx-1" />
           <button
-            class="p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            class="hidden lg:inline-flex shrink-0 p-1.5 rounded-md text-foreground/50 hover:text-primary hover:bg-primary/8 transition-colors duration-150 cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
             title="Chiudi documento"
             aria-label="Chiudi pannello documento"
             @click="showDocPanel = false"
@@ -370,6 +494,19 @@ async function saveVersion() {
             <X class="w-4 h-4" />
           </button>
         </header>
+
+        <ExportDialog
+          v-if="showExport"
+          :document-id="(route.params.id as string)"
+          :doc-title="documentStore.title"
+          @close="showExport = false"
+        />
+
+        <ValidationDialog
+          v-if="showValidation"
+          :document-id="(route.params.id as string)"
+          @close="showValidation = false"
+        />
 
         <!-- Editor tab — kept mounted (v-show) so the live editor and its
              edit-context survive tab switches instead of being torn down. -->

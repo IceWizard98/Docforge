@@ -52,3 +52,7 @@ class ResetPasswordRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str
+
+
+class ProfileUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)

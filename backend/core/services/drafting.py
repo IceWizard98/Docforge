@@ -139,6 +139,21 @@ def _pack_chunk_ids(pack) -> list[str]:
     return ids
 
 
+def _title_from_brief(brief: str) -> str:
+    """Human-readable draft title from the user's brief (first line, truncated).
+
+    Replaces the old "Draft from chat <id>" slug: technical ids in a title read
+    as a bug to the user once the draft is promoted to a document.
+    """
+    first_line = (brief or "").strip().splitlines()[0].strip() if (brief or "").strip() else ""
+    if not first_line:
+        return "Nuova bozza"
+    max_len = 60
+    if len(first_line) > max_len:
+        first_line = first_line[:max_len].rsplit(" ", 1)[0] + "…"
+    return f"Bozza: {first_line}"
+
+
 def _outline_from_slot_schema(doc_type: str) -> list[dict]:
     """Deterministic section outline from the slot schema of a known doc_type.
 
@@ -252,7 +267,7 @@ class DraftService:
                     return {
                         "draft_id": f"draft_{uuid4().hex[:8]}",
                         "chat_session_id": chat_session_id,
-                        "title": result.get("title", f"Draft from chat {chat_session_id[:8]}"),
+                        "title": result.get("title") or _title_from_brief(brief),
                         "sections": sections,
                         # Full user request — authoritative input for section content.
                         "brief": brief,
@@ -277,7 +292,7 @@ class DraftService:
         spec = {
             "draft_id": f"draft_{uuid4().hex[:8]}",
             "chat_session_id": chat_session_id,
-            "title": f"Draft from chat {chat_session_id[:8]}",
+            "title": _title_from_brief(brief),
             "sections": [
                 {"section_id": f"sec_{uuid4().hex[:8]}", "title": t} for t in default_titles
             ],
@@ -300,10 +315,20 @@ class DraftService:
         session_history: list[dict] | None = None,
         previous_sections: list[dict] | None = None,
         ground: bool = True,
+        notes: str = "",
+        notes_pack: object | None = None,
     ) -> dict:
         provider = llm or self._llm
         ctx_svc = context_service or self._context_service
         section_id = section.get("section_id", f"sec_{uuid4().hex[:8]}")
+
+        # Two-phase mode: `notes` are style/structure hints distilled from
+        # `notes_pack` in the extraction phase. Only the notes go into the prompt
+        # (never the raw corpus text, which contaminates weak models), but
+        # provenance/chunk-ids are resolved from notes_pack so promote-time links
+        # and cross-section dedup keep working. notes="" → exactly the prior path.
+        notes_text = (notes or "").strip()
+        use_notes = bool(notes_text and notes_pack is not None)
 
         if context_pack is None:
             from core.services.context import ContextPack
@@ -328,12 +353,19 @@ class DraftService:
                 session_history=session_history,
             )
 
-        chunk_ids = _pack_chunk_ids(context_pack)
+        chunk_ids = _pack_chunk_ids(notes_pack if use_notes else context_pack)
 
         if provider:
             # Ungrounded: never surface corpus text in the prompt, even if a pack
-            # was passed — the brief is the only source of facts.
-            context_text = self._format_context_pack(context_pack, ctx_svc) if ground else ""
+            # was passed — the brief is the only source of facts. In two-phase mode
+            # the extracted notes take the context slot instead.
+            if use_notes:
+                context_text = (
+                    "APPUNTI ESTRATTI DALLE FONTI (riferimento di stile/struttura, "
+                    "dati NON autoritativi):\n" + notes_text
+                )
+            else:
+                context_text = self._format_context_pack(context_pack, ctx_svc) if ground else ""
             prompt = SECTION_PROMPT_TEMPLATE.format(
                 title=spec.get("title", ""),
                 section_title=section.get("title", ""),
@@ -365,6 +397,12 @@ class DraftService:
                 if ground:
                     provenance = self._build_provenance([], context_pack)
                     runs = self._build_runs({}, content, provenance)
+                elif use_notes:
+                    # Two-phase: content is authored from the brief but grounded in
+                    # the notes' source pack — carry provenance so promote-time links
+                    # and dedup work (same as the grounded path).
+                    provenance = self._build_provenance([], notes_pack)
+                    runs = self._build_runs({}, content, provenance)
                 else:
                     # Brief-driven content is authored, not corpus-sourced: a plain
                     # run with no provenance and no placeholder mark.
@@ -382,7 +420,7 @@ class DraftService:
                     "provenance": provenance,
                     "runs": runs,
                     "placeholders": [r["placeholder"] for r in runs if r["placeholder"]],
-                    "context_chunk_ids": chunk_ids if ground else [],
+                    "context_chunk_ids": chunk_ids if (ground or use_notes) else [],
                 }
             except Exception:
                 logger.exception(

@@ -85,6 +85,18 @@ class PgvectorAdapter:
             clauses.append("sd.created_by = CAST(:owner_id AS uuid)")
             params["owner_id"] = str(filters.owner_id)
 
+        if filters.excluded_source_ids:
+            # Per-document exclusion. The IS NULL guard is mandatory: `NULL NOT IN
+            # (...)` is NULL, which would drop provenance-less chunks entirely.
+            holders = ",".join(
+                f"CAST(:ex_{i} AS uuid)" for i in range(len(filters.excluded_source_ids))
+            )
+            clauses.append(
+                f"(dc.source_document_id IS NULL OR dc.source_document_id NOT IN ({holders}))"
+            )
+            for i, sid in enumerate(filters.excluded_source_ids):
+                params[f"ex_{i}"] = str(sid)
+
         if clauses:
             return " AND " + " AND ".join(clauses), params
         return "", {}

@@ -23,8 +23,12 @@ def _update_export_status(export_id: str, status: str, file_key: str = "") -> No
         conn = await asyncpg.connect(dsn=dsn)
         try:
             payload = json.dumps({"status": status, "file_key": file_key})
+            # MERGE into the payload (jsonb `||`) instead of overwriting it, so the
+            # `format` key written at create time survives — the status/download
+            # endpoints rely on it to build the right file_key. The column is
+            # `json` (no `||` operator): cast to jsonb before merging.
             await conn.execute(
-                "UPDATE audit_events SET payload = $1::jsonb WHERE id = $2",
+                "UPDATE audit_events SET payload = payload::jsonb || $1::jsonb WHERE id = $2",
                 payload, uuid.UUID(export_id),
             )
         finally:
@@ -38,24 +42,33 @@ def _update_export_status(export_id: str, status: str, file_key: str = "") -> No
 
 @celery_app.task
 def export_document_task(
-    export_id: str, document_id: str, document: dict, fmt: str
+    export_id: str,
+    document_id: str,
+    document: dict,
+    fmt: str,
+    template_file_key: str | None = None,
 ) -> ExportCompleted:
     try:
+        storage = MinioStorageAdapter()
+        # Templates only apply to the DOCX-backed formats; markdown ignores them.
+        template_bytes: bytes | None = None
+        if template_file_key and fmt in {"pdf", "docx"}:
+            template_bytes = asyncio.run(storage.download(template_file_key))
+
         service = ExportService()
         if fmt == "pdf":
-            file_data = asyncio.run(service.export_pdf(document))
+            file_data = asyncio.run(service.export_pdf(document, template_bytes=template_bytes))
             content_type = "application/pdf"
         elif fmt == "docx":
-            file_data = asyncio.run(service.export_docx(document))
+            file_data = asyncio.run(service.export_docx(document, template_bytes=template_bytes))
             content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif fmt == "md" or fmt == "markdown":
+        elif fmt in {"md", "markdown"}:
             from adapters.export.markdown import export_markdown
             file_data = export_markdown(document.get("content", {})).encode("utf-8")
             content_type = "text/markdown"
         else:
             raise ValueError(f"Unsupported export format: {fmt}")
 
-        storage = MinioStorageAdapter()
         file_key = f"exports/{document_id}/export.{fmt}"
         asyncio.run(storage.upload(file_key, file_data, content_type))
 

@@ -61,6 +61,13 @@ export const useAuthStore = defineStore('auth', () => {
     return response
   }
 
+  function setDisplayName(name: string) {
+    if (currentUser.value) {
+      currentUser.value = { ...currentUser.value, displayName: name }
+      localStorage.setItem('auth_user', JSON.stringify(currentUser.value))
+    }
+  }
+
   function logout() {
     clearAuth()
     router.push('/login')
@@ -93,5 +100,6 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     logout,
     checkToken,
+    setDisplayName,
   }
 })

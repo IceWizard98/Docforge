@@ -53,3 +53,8 @@ class SourceDocumentResponse(BaseModel):
     parsed_content: dict | None = None
     metadata: dict = Field(validation_alias="doc_metadata")
     created_at: datetime
+
+
+class DocumentSourceItem(SourceDocumentResponse):
+    # Whether this source is excluded from the current document's RAG retrieval.
+    excluded: bool = False

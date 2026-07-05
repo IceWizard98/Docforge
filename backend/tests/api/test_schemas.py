@@ -166,3 +166,25 @@ class TestExportCreate:
     def test_invalid_format_raises(self):
         with pytest.raises(ValidationError):
             ExportCreate(format="html")
+
+
+class TestValidationReportSchema:
+    """document_id is typed str: routes MUST cast UUID at the boundary
+    (regression: ValidationReport(document_id=UUID) raised in the validate
+    endpoints -> 500)."""
+
+    def test_accepts_string_document_id(self):
+        from api.schemas.validation import ValidationReport
+
+        report = ValidationReport(
+            document_id=str(uuid.uuid4()), score=1.0, passed=True, issues=[]
+        )
+        assert report.passed is True
+
+    def test_rejects_uuid_document_id(self):
+        from api.schemas.validation import ValidationReport
+
+        with pytest.raises(ValidationError):
+            ValidationReport(
+                document_id=uuid.uuid4(), score=1.0, passed=True, issues=[]
+            )

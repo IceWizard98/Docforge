@@ -23,6 +23,7 @@ from adapters.postgresql.models import (
     DraftModel,
     SourceDocumentModel,
 )
+from adapters.postgresql.repositories import excluded_source_ids as _excluded_source_ids
 from adapters.postgresql.pgvector import PgvectorAdapter
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.chat import (
@@ -85,7 +86,11 @@ def _format_transparency(
 
 
 async def _compute_transparency(
-    db_session: AsyncSession, doc_model, text: str, sources: list[dict]
+    db_session: AsyncSession,
+    doc_model,
+    text: str,
+    sources: list[dict],
+    filters: RetrievalFilters | None = None,
 ) -> tuple[str | None, list[dict]]:
     """Infer the target doc_type and run per-slot retrieval for transparency.
 
@@ -107,7 +112,7 @@ async def _compute_transparency(
             llm_provider=None,
             slot_service=_SLOT_SERVICE,
         )
-        pack = await slot_svc.build_slot_context(candidate)
+        pack = await slot_svc.build_slot_context(candidate, filters=filters)
     except Exception:
         logger.exception("Transparency slot retrieval failed for %s", candidate)
         return None, []
@@ -115,12 +120,13 @@ async def _compute_transparency(
     return _format_transparency(schema.label, pack, titles)
 
 
-async def _retrieve_source_context(
+async def _retrieve_source_context(  # noqa: PLR0913
     db_session: AsyncSession,
     query: str,
     filters: RetrievalFilters | None = None,
     collector: list[ContextChunk] | None = None,
     owner_id: str | None = None,
+    excluded_source_ids: list[str] | None = None,
 ) -> str:
     """Semantic retrieval over the uploaded source corpus.
 
@@ -128,7 +134,8 @@ async def _retrieve_source_context(
     or retrieval is unavailable. Wires the pgvector adapter + LLM reranker so the
     vector DB is actually queried during composition. When ``collector`` is given,
     the retrieved chunks are appended to it (for provenance/citation tracking).
-    ``owner_id`` scopes retrieval to a single user's sources (corpus isolation).
+    ``owner_id`` scopes retrieval to a single user's sources (corpus isolation);
+    ``excluded_source_ids`` drops sources the user hid for this document.
     """
     if not query:
         return ""
@@ -136,6 +143,9 @@ async def _retrieve_source_context(
         # Always enforce owner isolation regardless of the caller's other filters.
         filters = filters or RetrievalFilters()
         filters.owner_id = owner_id
+    if excluded_source_ids:
+        filters = filters or RetrievalFilters()
+        filters.excluded_source_ids = excluded_source_ids
     try:
         pgvector = PgvectorAdapter(db_session)
         # No LLM reranker on local models: it adds a slow, unreliable LLM call per
@@ -358,59 +368,6 @@ def _document_outline(content: dict | None) -> str:
         return ""
     header = "Struttura del documento corrente (usa questi sectionId esatti per modificare):\n"
     return header + "\n".join(lines)
-
-
-async def _corpus_catalog(
-    db_session: AsyncSession, limit: int = 30, owner_id: str | None = None
-) -> str:
-    """Catalog of the uploaded sources so the agent can answer about them.
-
-    ``owner_id`` scopes the catalog to a single user's sources (corpus isolation)
-    so other users' filenames/metadata are never surfaced to the model.
-    """
-    try:
-        stmt = select(SourceDocumentModel)
-        if owner_id:
-            stmt = stmt.where(
-                SourceDocumentModel.created_by == uuid.UUID(owner_id)
-            )
-        stmt = stmt.order_by(SourceDocumentModel.created_at.desc()).limit(limit)
-        result = await db_session.execute(stmt)
-        sources = result.scalars().all()
-    except SQLAlchemyError:
-        logger.exception("Failed to load corpus catalog")
-        return ""
-    if not sources:
-        return ""
-    lines = []
-    for s in sources:
-        tags = ", ".join(s.tags or []) if isinstance(s.tags, list) else ""
-        created = s.created_at.date().isoformat() if s.created_at else ""
-        meta = " · ".join(p for p in [s.doc_type, s.language, created] if p)
-        tag_str = f" [tag: {tags}]" if tags else ""
-        lines.append(f"- {s.filename} ({meta}){tag_str}")
-    return "Documenti caricati dall'utente (catalogo):\n" + "\n".join(lines)
-
-
-def _make_corpus_executor(db_session, filters=None, collector=None, owner_id=None):
-    """Build the tool executor used by the agent (search_corpus / list_documents).
-
-    ``filters`` scopes corpus search (e.g. by doc_type); ``collector`` accumulates
-    the chunks the agent actually retrieved so the caller can build sources/citations.
-    ``owner_id`` enforces corpus isolation for both tools (only the caller's sources).
-    """
-    async def _corpus_executor(name: str, args: dict) -> str:
-        if name == "search_corpus":
-            found = await _retrieve_source_context(
-                db_session, args.get("query", ""), filters=filters,
-                collector=collector, owner_id=owner_id,
-            )
-            return found or "Nessun passaggio rilevante trovato."
-        if name == "list_documents":
-            cat = await _corpus_catalog(db_session, owner_id=owner_id)
-            return cat or "Nessun documento caricato."
-        return f"Strumento sconosciuto: {name}"
-    return _corpus_executor
 
 
 async def _build_chat_context(db_session, chat_model, current_user) -> tuple[str, object]:
@@ -1099,11 +1056,15 @@ async def send_message(
     # them into the prompt (weak local models don't reliably call a search tool).
     # Owner-scoped (corpus isolation); retrieved_chunks feeds sources/citations/
     # transparency. Skip the embedding call entirely when there is no indexed corpus.
+    # Fetched once and reused for both RAG retrieval and the transparency scan
+    # below, so a document-bound chat turn doesn't run the same query twice.
+    excluded_ids = await _excluded_source_ids(db_session, chat_model.document_id)
     retrieved_chunks: list[ContextChunk] = []
     if body.content and await _corpus_has_chunks(db_session, owner_id=current_user.user_id):
         rag_context = await _retrieve_source_context(
             db_session, body.content, filters=None, collector=retrieved_chunks,
             owner_id=current_user.user_id,
+            excluded_source_ids=excluded_ids,
         )
         if rag_context:
             system_prompt += _format_grounding_block(rag_context)
@@ -1173,7 +1134,11 @@ async def send_message(
     intent_summary, slot_status = None, []
     if _is_drafting_turn(action_data) or retrieved_chunks:
         intent_summary, slot_status = await _compute_transparency(
-            db_session, doc_model, body.content, sources
+            db_session, doc_model, body.content, sources,
+            filters=RetrievalFilters(
+                owner_id=str(current_user.user_id),
+                excluded_source_ids=excluded_ids or None,
+            ),
         )
 
     # Surgical edits are proposed as reviewable PatchSets via the 'propose_patches'
@@ -1241,7 +1206,8 @@ async def stream_chat(
         db_session, chat_model, current_user
     )
     source_context = await _retrieve_source_context(
-        db_session, last_user_msg.content, owner_id=current_user.user_id
+        db_session, last_user_msg.content, owner_id=current_user.user_id,
+        excluded_source_ids=await _excluded_source_ids(db_session, chat_model.document_id),
     )
     if source_context:
         # Same style-only framing as the non-streaming path: sources are reference,
@@ -1429,6 +1395,7 @@ async def send_message_with_files(
         rag_context = await _retrieve_source_context(
             db_session, content, filters=None, collector=retrieved_chunks,
             owner_id=current_user.user_id,
+            excluded_source_ids=await _excluded_source_ids(db_session, chat_model.document_id),
         )
         if rag_context:
             system_prompt += _format_grounding_block(rag_context)

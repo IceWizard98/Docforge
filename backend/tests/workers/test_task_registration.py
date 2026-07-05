@@ -14,9 +14,6 @@ EXPECTED_TASKS = [
     "workers.drafting.generate_draft_task",
     "workers.drafting.generate_section_task",
     "workers.export.export_document_task",
-    "workers.patching.generate_patch_task",
-    "workers.patching.validate_patch_task",
-    "workers.validation.validate_document_task",
 ]
 
 

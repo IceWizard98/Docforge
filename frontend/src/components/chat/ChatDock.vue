@@ -11,6 +11,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useDocumentStore } from '@/stores/documentStore'
 import { promoteDraft, getDraft, getActiveDraft, getChatSession, extractApiError } from '@/api/client'
 import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import type { ChatActionPayload, SourceRef, ChatMessageResponse } from '@/types/document'
 import type { Editor } from '@tiptap/core'
 import { MessageSquare } from '@lucide/vue'
@@ -23,6 +24,7 @@ const props = defineProps<{
 const inputText = ref('')
 const router = useRouter()
 const toast = useToast()
+const { confirm } = useConfirm()
 const chatStore = useChatStore()
 const documentStore = useDocumentStore()
 const attachedFiles = ref<File[]>([])
@@ -455,7 +457,13 @@ function cancelRename() {
 }
 
 async function confirmDeleteSession(id: string) {
-  if (!window.confirm('Eliminare questa sessione chat?')) return
+  const ok = await confirm({
+    title: 'Elimina sessione',
+    message: 'Eliminare questa sessione chat?',
+    confirmLabel: 'Elimina',
+    danger: true,
+  })
+  if (!ok) return
   await chatStore.deleteSession(id)
 }
 
@@ -661,7 +669,7 @@ onMounted(() => {
         <textarea
           ref="inputTextareaRef"
           v-model="inputText"
-          class="w-full min-h-[90px] max-h-[360px] px-4 pt-3.5 pb-14 text-sm bg-transparent text-foreground placeholder-foreground/40 resize-none focus:outline-none"
+          class="w-full min-h-[60px] md:min-h-[90px] max-h-[360px] px-4 pt-3.5 pb-14 text-sm bg-transparent text-foreground placeholder-foreground/40 resize-none focus:outline-none"
           placeholder="Descrivi il documento che vuoi creare o la modifica da fare..."
           rows="3"
           :disabled="chatStore.isSending"

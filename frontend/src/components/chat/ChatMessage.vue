@@ -72,7 +72,7 @@ function handleAction(action: ChatActionPayload) {
     </div>
 
     <!-- Content -->
-    <div class="flex flex-col max-w-[80%]" :class="isUser ? 'items-end' : 'items-start'">
+    <div class="flex flex-col max-w-[90%] md:max-w-[80%]" :class="isUser ? 'items-end' : 'items-start'">
       <div
         class="px-3 py-2 rounded-lg text-sm leading-relaxed"
         :class="isUser ? 'bg-primary text-white rounded-tr-sm' : 'bg-surface border border-primary/10 rounded-tl-sm'"

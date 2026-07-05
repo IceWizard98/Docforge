@@ -9,8 +9,8 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     database_url: str = "postgresql+asyncpg://docforge:docforge@localhost:5432/docforge"
-    redis_url: str = "redis://localhost:6379/0"
-    storage_provider: str = "minio"
+    # host 6380: la 6379 locale è occupata da un altro progetto (vedi docker-compose)
+    redis_url: str = "redis://localhost:6380/0"
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = ""
     minio_secret_key: str = ""
@@ -33,8 +33,6 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     cors_origins: str = "http://localhost:5173"
     log_level: str = "INFO"
-    otel_service_name: str = "docforge"
-    enable_otel: bool = False
     tesseract_cmd: str = "tesseract"
     # Local-first defaults: ollama nomic-embed-text (768) matches the pgvector
     # column dimension after migration 022. Using OpenAI (1536) requires migrating
@@ -45,6 +43,10 @@ class Settings(BaseSettings):
     # Single source of truth for the embedding vector size. MUST match the
     # pgvector column dimension (vector(768) in migration 022).
     embedding_dimension: int = 768
+    # Two-phase drafting: distil style/structure notes from the corpus before
+    # writing each section (facts still come only from the brief). Kill-switch to
+    # fall back to pure brief-driven drafting.
+    draft_extraction_enabled: bool = True
 
 
     @property

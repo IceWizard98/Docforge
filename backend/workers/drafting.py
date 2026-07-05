@@ -5,18 +5,62 @@ from uuid import UUID
 from sqlalchemy.orm.attributes import flag_modified
 
 from adapters.llm.factory import get_llm_provider
-from adapters.postgresql.models import DraftModel
+from adapters.postgresql.models import ChatSessionModel, DraftModel
+from adapters.postgresql.pgvector import PgvectorAdapter
+from adapters.postgresql.repositories import excluded_source_ids
+from config.settings import get_settings
 from core.events import DraftGenerated, SectionGenerated
+from core.services.context import ContextPackService
 from core.services.drafting import (
     DraftService,
     assemble_draft_content,
     build_section_node,
     spec_sections_with_provenance,
 )
+from core.services.extraction import ExtractionService
+from core.services.search import RetrievalFilters
 from workers.celery_app import celery_app
 from workers.db import worker_engine, worker_session
 
 logger = logging.getLogger(__name__)
+
+
+async def _extract_section_notes(  # noqa: PLR0913
+    session_factory, extraction, provider, section, brief, filters, history,
+) -> tuple[str, object | None]:
+    """Phase 1: retrieve for a section, then distil style/structure notes.
+
+    Retrieval runs in its OWN short-lived session (opened and closed here) so the
+    DB connection is released BEFORE the extraction LLM call — otherwise a
+    connection would sit idle-in-transaction for the minutes each section's LLM
+    calls take, exhausting the Postgres pool under concurrent drafts. The returned
+    ContextPack is plain dataclasses, safe to use after the session closes.
+
+    Returns (notes, notes_pack). notes="" (and notes_pack=None) whenever there's
+    nothing usable, so the caller falls back to pure brief-driven drafting. Never
+    raises: retrieval failure (DB/embedding) must degrade to brief-only, not fail
+    the whole draft.
+    """
+    try:
+        async with session_factory() as session:
+            ctx_svc = ContextPackService(pgvector=PgvectorAdapter(session))
+            pack = await ctx_svc.build_section_context(
+                section_title=section.get("query_hint") or section.get("title", ""),
+                filters=filters,
+                session_history=history,
+            )
+    except Exception:
+        logger.exception("Section retrieval failed for %s", section.get("title", ""))
+        return "", None
+    if not getattr(pack, "sources", None):
+        return "", None
+    notes = await extraction.extract_notes(
+        section_title=section.get("title", ""),
+        brief=brief,
+        context_pack=pack,
+        llm=provider,
+    )
+    return (notes, pack) if notes else ("", None)
 
 
 @celery_app.task
@@ -36,7 +80,7 @@ def generate_draft_task(  # noqa: PLR0915
     chat-captured doc_type.
     """
     try:
-        async def _run():
+        async def _run():  # noqa: PLR0915
             async with worker_engine() as session_factory:
                 provider = get_llm_provider()
 
@@ -66,25 +110,63 @@ def generate_draft_task(  # noqa: PLR0915
                 # Show the real total up front.
                 await _set_progress(0)
 
-                # Brief-driven: sections are written from the user's brief, NOT the
-                # corpus (which holds the user's OTHER documents and would
-                # contaminate the new one). Accumulate previous_sections so the
-                # model doesn't repeat itself across sections.
+                # Two-phase (draft_extraction_enabled): before writing each section
+                # we retrieve the user's OWN corpus (owner-scoped, minus per-document
+                # exclusions) and distil STYLE/STRUCTURE notes from it — never the raw
+                # text, and never parties/amounts/dates (those stay authoritative in
+                # the brief). Kill-switch → pure brief-driven, no retrieval at all.
+                extraction_enabled = get_settings().draft_extraction_enabled
+                filters: RetrievalFilters | None = None
+                if extraction_enabled:
+                    async with session_factory() as session:
+                        chat_session = await session.get(
+                            ChatSessionModel, UUID(chat_session_id)
+                        )
+                        owner_id = str(chat_session.user_id) if chat_session else None
+                        doc_uuid = None
+                        if document_id:
+                            doc_uuid = UUID(document_id)
+                        elif chat_session and chat_session.document_id:
+                            doc_uuid = chat_session.document_id
+                        excluded = await excluded_source_ids(session, doc_uuid)
+                    # No owner → don't retrieve (would leak across users' corpora).
+                    if owner_id:
+                        filters = RetrievalFilters(
+                            owner_id=owner_id, excluded_source_ids=excluded or None
+                        )
+
+                # Accumulate previous_sections so the model doesn't repeat itself,
+                # and history so each section's consumed chunks are deduplicated from
+                # later sections' retrieval.
                 previous_sections: list[dict] = []
+                history: list[dict] = []
                 results: list[dict] = []
                 service = DraftService(llm=provider)
+                extraction = ExtractionService()
 
+                # No long-lived retrieval session: each section's retrieval opens
+                # and closes its own short session inside _extract_section_notes, so
+                # no DB connection is held across the (slow) per-section LLM calls.
                 for done, sec in enumerate(sections, start=1):
+                    notes, notes_pack = "", None
+                    if filters is not None:
+                        notes, notes_pack = await _extract_section_notes(
+                            session_factory, extraction, provider, sec,
+                            spec.get("brief", ""), filters, history,
+                        )
                     result = await service.generate_section(
                         spec, sec, context_pack=None, llm=provider,
                         previous_sections=previous_sections,
-                        ground=False,
+                        ground=False, notes=notes, notes_pack=notes_pack,
                     )
                     results.append(result)
                     previous_sections.append({
                         "title": result.get("title", ""),
                         "content": result.get("content", ""),
                     })
+                    consumed = result.get("context_chunk_ids") or []
+                    if consumed:
+                        history.append({"context_chunks": consumed})
                     await _set_progress(done)
 
                 async with session_factory() as session:
@@ -135,63 +217,101 @@ def generate_draft_task(  # noqa: PLR0915
 
 
 @celery_app.task
-def generate_section_task(
+def generate_section_task(  # noqa: PLR0915
     draft_id: str, section_id: str, document_id: str | None = None
 ) -> SectionGenerated:
-    """Regenerate a single section in place and persist content + provenance."""
+    """Regenerate a single section in place and persist content + provenance.
+
+    DB sessions are short-lived and never held across the LLM calls: one session
+    to load the draft + resolve owner/exclusions, then retrieval (its own session)
+    and generation with NO connection held, then a final session to persist. This
+    keeps a Postgres connection from sitting idle-in-transaction for the minutes
+    the regeneration LLM calls take.
+    """
     try:
-        async def _run():
-            async with worker_session() as session:
-                draft = await session.get(DraftModel, UUID(draft_id))
-                if draft is None:
-                    logger.error("Draft %s not found for section regen", draft_id)
-                    return
-
-                spec = dict(draft.spec or {})
-                spec_sections = spec.get("sections", [])
-                idx = next(
-                    (i for i, s in enumerate(spec_sections)
-                     if s.get("section_id") == section_id),
-                    None,
-                )
-                if idx is None:
-                    logger.error("Section %s not in draft %s spec", section_id, draft_id)
-                    return
-
+        async def _run():  # noqa: PLR0915
+            async with worker_engine() as session_factory:
                 provider = get_llm_provider()
-                # Brief-driven, consistent with generate_draft_task: no corpus
-                # injection (it would contaminate the regenerated section).
                 service = DraftService(llm=provider)
-                section = {
-                    "section_id": section_id,
-                    "title": spec_sections[idx].get("title", ""),
-                }
+
+                # 1. Load spec + resolve section + owner/exclusions (short session).
+                async with session_factory() as session:
+                    draft = await session.get(DraftModel, UUID(draft_id))
+                    if draft is None:
+                        logger.error("Draft %s not found for section regen", draft_id)
+                        return
+                    spec = dict(draft.spec or {})
+                    spec_sections = spec.get("sections", [])
+                    idx = next(
+                        (i for i, s in enumerate(spec_sections)
+                         if s.get("section_id") == section_id),
+                        None,
+                    )
+                    if idx is None:
+                        logger.error("Section %s not in draft %s spec", section_id, draft_id)
+                        return
+                    section = {
+                        "section_id": section_id,
+                        "title": spec_sections[idx].get("title", ""),
+                        "query_hint": spec_sections[idx].get("query_hint", ""),
+                    }
+                    filters = None
+                    if get_settings().draft_extraction_enabled:
+                        chat_session = await session.get(
+                            ChatSessionModel, draft.chat_session_id
+                        )
+                        owner_id = str(chat_session.user_id) if chat_session else None
+                        if owner_id:
+                            doc_uuid = draft.document_id or (
+                                chat_session.document_id if chat_session else None
+                            )
+                            excluded = await excluded_source_ids(session, doc_uuid)
+                            filters = RetrievalFilters(
+                                owner_id=owner_id, excluded_source_ids=excluded or None
+                            )
+
+                # 2. Retrieval (own short session) + generation — no session held.
+                notes, notes_pack = "", None
+                if filters is not None:
+                    notes, notes_pack = await _extract_section_notes(
+                        session_factory, ExtractionService(), provider, section,
+                        spec.get("brief", ""), filters, None,
+                    )
                 result = await service.generate_section(
-                    spec, section, context_pack=None, llm=provider, ground=False
+                    spec, section, context_pack=None, llm=provider, ground=False,
+                    notes=notes, notes_pack=notes_pack,
                 )
                 # Keep the existing sectionId stable across regeneration.
                 result["section_id"] = section_id
 
-                # Update the matching ProseMirror section node + spec provenance.
-                content = dict(draft.content or {"type": "doc", "content": []})
-                nodes = content.get("content", [])
-                for i, node in enumerate(nodes):
-                    if (
-                        isinstance(node, dict)
-                        and node.get("type") == "section"
-                        and node.get("attrs", {}).get("sectionId") == section_id
-                    ):
-                        nodes[i] = build_section_node(result, i)
-                        break
-                content["content"] = nodes
-                spec_sections[idx] = spec_sections_with_provenance([result])[0]
-                spec["sections"] = spec_sections
+                # 3. Persist content + provenance (short session).
+                async with session_factory() as session:
+                    draft = await session.get(DraftModel, UUID(draft_id))
+                    if draft is None:
+                        logger.error("Draft %s vanished before section save", draft_id)
+                        return
+                    spec = dict(draft.spec or {})
+                    spec_sections = spec.get("sections", [])
+                    content = dict(draft.content or {"type": "doc", "content": []})
+                    nodes = content.get("content", [])
+                    for i, node in enumerate(nodes):
+                        if (
+                            isinstance(node, dict)
+                            and node.get("type") == "section"
+                            and node.get("attrs", {}).get("sectionId") == section_id
+                        ):
+                            nodes[i] = build_section_node(result, i)
+                            break
+                    content["content"] = nodes
+                    if idx < len(spec_sections):
+                        spec_sections[idx] = spec_sections_with_provenance([result])[0]
+                        spec["sections"] = spec_sections
 
-                draft.content = content
-                draft.spec = spec
-                flag_modified(draft, "content")
-                flag_modified(draft, "spec")
-                await session.commit()
+                    draft.content = content
+                    draft.spec = spec
+                    flag_modified(draft, "content")
+                    flag_modified(draft, "spec")
+                    await session.commit()
 
         asyncio.run(_run())
         return SectionGenerated(draft_id=draft_id, section_id=section_id)

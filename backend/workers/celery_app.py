@@ -16,8 +16,6 @@ celery_app = Celery(
         "workers.classification",
         "workers.drafting",
         "workers.export",
-        "workers.patching",
-        "workers.validation",
     ],
 )
 celery_app.conf.update(

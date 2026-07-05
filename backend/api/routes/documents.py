@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,15 +14,22 @@ from adapters.minio.storage import MinioStorageAdapter
 from adapters.parsers.docx import parse_docx_bytes
 from adapters.parsers.pdf import parse_pdf_bytes
 from adapters.postgresql.base import get_session
-from adapters.postgresql.models import AuditEventModel, DocumentVersionModel, SourceDocumentModel
+from adapters.postgresql.models import (
+    AuditEventModel,
+    DocumentSourceExclusionModel,
+    DocumentVersionModel,
+    SourceDocumentModel,
+)
 from adapters.postgresql.repositories import DocumentRepository
 from api.middleware.auth import AuthUser, get_current_user
 from api.schemas.document import (
     DocumentCreate,
     DocumentListResponse,
     DocumentResponse,
+    DocumentSourceItem,
     DocumentUpdate,
 )
+from api.upload_validation import read_validated_upload
 from core.doc_types import normalize as normalize_doc_type
 from core.models.document import Document
 from workers.classification import classify_document_task
@@ -305,12 +313,13 @@ def _parse_to_prosemirror(data: bytes, extension: str) -> dict:
 
 
 @router.get("", response_model=DocumentListResponse)
-async def list_documents(
+async def list_documents(  # noqa: PLR0913
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=20, ge=1, le=100),
     doc_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
     tag: str | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=200),
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -318,7 +327,7 @@ async def list_documents(
     items, total = await repo.list_documents(
         page, per_page,
         doc_type=doc_type, status=status, tag=tag,
-        owner_id=current_user.user_id,
+        owner_id=current_user.user_id, search=search,
     )
     return DocumentListResponse(
         data=[DocumentResponse.model_validate(d) for d in items],
@@ -375,18 +384,8 @@ async def upload_document(
     current_user: AuthUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    allowed_extensions = {".pdf", ".docx", ".txt", ".md"}
-
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No filename provided")
-
-    ext = Path(file.filename).suffix.lower()
-    if ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type '{ext}'",
-        )
-
+    # MIME check is documents-only (source uploads accept looser types); the rest
+    # of the gate (filename/extension/empty/size) is the shared helper.
     allowed_mime_types = {
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -400,19 +399,9 @@ async def upload_document(
             detail=f"Unsupported file type: {file.content_type}",
         )
 
-    file_bytes = await file.read()
-
-    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File exceeds 50 MB limit",
-        )
-    if len(file_bytes) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot upload empty file",
-        )
+    ext, file_bytes = await read_validated_upload(
+        file, {".pdf", ".docx", ".txt", ".md"}
+    )
 
     try:
         prosemirror_content = _parse_to_prosemirror(file_bytes, ext)
@@ -745,6 +734,96 @@ async def restore_version(
     _audit(session, current_user.user_id,
            "version_restored", "document", str(doc_id), {"restored_to": version})
     return DocumentResponse.model_validate(model)
+
+
+async def _owned_document_or_404(session, doc_id, current_user):
+    repo = DocumentRepository(session)
+    if await repo.get_by_id(doc_id, owner_id=current_user.user_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+
+async def _owned_source_or_404(session, source_id, current_user):
+    result = await session.execute(
+        select(SourceDocumentModel).where(
+            SourceDocumentModel.id == source_id,
+            SourceDocumentModel.created_by == uuid.UUID(current_user.user_id),
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+
+
+@router.get("/{doc_id}/sources", response_model=list[DocumentSourceItem])
+async def list_document_sources(
+    doc_id: UUID,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """All of the user's sources (document-scoped and corpus-wide) with a flag
+    marking those excluded from this document's RAG retrieval."""
+    await _owned_document_or_404(session, doc_id, current_user)
+    result = await session.execute(
+        select(SourceDocumentModel, DocumentSourceExclusionModel.document_id)
+        .outerjoin(
+            DocumentSourceExclusionModel,
+            (DocumentSourceExclusionModel.source_document_id == SourceDocumentModel.id)
+            & (DocumentSourceExclusionModel.document_id == doc_id),
+        )
+        .where(SourceDocumentModel.created_by == uuid.UUID(current_user.user_id))
+        .order_by(SourceDocumentModel.created_at.desc())
+    )
+    items = []
+    for src, excluded_doc_id in result.all():
+        item = DocumentSourceItem.model_validate(src)
+        item.excluded = excluded_doc_id is not None
+        items.append(item)
+    return items
+
+
+@router.put("/{doc_id}/sources/{source_id}/exclusion", status_code=status.HTTP_204_NO_CONTENT)
+async def exclude_source(
+    doc_id: UUID,
+    source_id: UUID,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await _owned_document_or_404(session, doc_id, current_user)
+    await _owned_source_or_404(session, source_id, current_user)
+    stmt = (
+        pg_insert(DocumentSourceExclusionModel)
+        .values(document_id=doc_id, source_document_id=source_id)
+        .on_conflict_do_nothing(index_elements=["document_id", "source_document_id"])
+    )
+    try:
+        await session.execute(stmt)
+        await session.flush()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Database constraint violation"
+        )
+
+
+@router.delete("/{doc_id}/sources/{source_id}/exclusion", status_code=status.HTTP_204_NO_CONTENT)
+async def include_source(
+    doc_id: UUID,
+    source_id: UUID,
+    current_user: AuthUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await _owned_document_or_404(session, doc_id, current_user)
+    await _owned_source_or_404(session, source_id, current_user)
+    try:
+        await session.execute(
+            delete(DocumentSourceExclusionModel).where(
+                DocumentSourceExclusionModel.document_id == doc_id,
+                DocumentSourceExclusionModel.source_document_id == source_id,
+            )
+        )
+        await session.flush()
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Database constraint violation"
+        )
 
 
 class ApprovalBody(BaseModel):

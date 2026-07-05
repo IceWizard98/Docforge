@@ -159,6 +159,61 @@ class TestRegister:
         assert resp.status_code == 409
 
 
+class TestUpdateProfile:
+    @pytest.mark.asyncio
+    async def test_success(self, async_client, mock_session, auth_headers):
+        user = MagicMock()
+        user.id = "00000000-0000-0000-0000-000000000001"
+        user.email = "test@example.com"
+        user.display_name = "Old Name"
+        user.role = "editor"
+
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = user
+        mock_session.execute.return_value = result
+
+        resp = await async_client.patch(
+            "/api/v1/auth/me",
+            json={"display_name": "New Name"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["display_name"] == "New Name"
+        assert data["email"] == "test@example.com"
+        assert user.display_name == "New Name"
+
+    @pytest.mark.asyncio
+    async def test_empty_display_name_returns_422(self, async_client, auth_headers):
+        resp = await async_client.patch(
+            "/api/v1/auth/me",
+            json={"display_name": ""},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_requires_auth(self, async_client):
+        resp = await async_client.patch(
+            "/api/v1/auth/me",
+            json={"display_name": "Whoever"},
+        )
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_user_not_found_returns_404(self, async_client, mock_session, auth_headers):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = result
+
+        resp = await async_client.patch(
+            "/api/v1/auth/me",
+            json={"display_name": "New Name"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+
 class TestRefresh:
     @pytest.mark.asyncio
     async def test_success(self, async_client, mock_session):

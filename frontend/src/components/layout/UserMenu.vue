@@ -67,7 +67,7 @@ onUnmounted(() => {
     >
       <div
         v-if="open"
-        class="absolute right-0 mt-2 w-56 rounded-lg border border-primary/10 bg-card shadow-lg py-1 z-50 origin-top-right"
+        class="absolute right-0 mt-2 w-56 max-w-[calc(100vw-1.5rem)] rounded-lg border border-primary/10 bg-card shadow-lg py-1 z-50 origin-top-right"
         @keydown.escape="open = false"
       >
         <div class="px-3 py-2 border-b border-primary/10">

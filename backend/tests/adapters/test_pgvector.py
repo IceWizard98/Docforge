@@ -19,6 +19,51 @@ def test_owner_filter_scopes_by_created_by():
     assert "created_by" not in clause2
 
 
+def test_excluded_source_ids_adds_null_safe_not_in_clause():
+    # Per-document exclusion: excluded ids must drop those source chunks while the
+    # IS NULL guard keeps provenance-less chunks (NULL NOT IN (...) is NULL -> drops).
+    from adapters.postgresql.pgvector import PgvectorAdapter
+    from core.services.search import RetrievalFilters
+
+    adapter = PgvectorAdapter(MagicMock())
+    ex = ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+    clause, params = adapter._build_filter_clauses(
+        RetrievalFilters(excluded_source_ids=ex)
+    )
+    assert "dc.source_document_id IS NULL OR dc.source_document_id NOT IN" in clause
+    assert "CAST(:ex_0 AS uuid)" in clause
+    assert "CAST(:ex_1 AS uuid)" in clause
+    assert params["ex_0"] == ex[0]
+    assert params["ex_1"] == ex[1]
+
+
+def test_excluded_source_ids_combines_with_owner_id():
+    from adapters.postgresql.pgvector import PgvectorAdapter
+    from core.services.search import RetrievalFilters
+
+    adapter = PgvectorAdapter(MagicMock())
+    clause, params = adapter._build_filter_clauses(
+        RetrievalFilters(
+            owner_id="33333333-3333-3333-3333-333333333333",
+            excluded_source_ids=["44444444-4444-4444-4444-444444444444"],
+        )
+    )
+    assert "sd.created_by" in clause
+    assert "NOT IN" in clause
+    assert params["owner_id"] == "33333333-3333-3333-3333-333333333333"
+    assert params["ex_0"] == "44444444-4444-4444-4444-444444444444"
+
+
+def test_excluded_source_ids_empty_is_noop():
+    from adapters.postgresql.pgvector import PgvectorAdapter
+    from core.services.search import RetrievalFilters
+
+    adapter = PgvectorAdapter(MagicMock())
+    clause, params = adapter._build_filter_clauses(RetrievalFilters(excluded_source_ids=[]))
+    assert "NOT IN" not in clause
+    assert not any(k.startswith("ex_") for k in params)
+
+
 @pytest.mark.asyncio
 async def test_create_extension():
     mock_session = AsyncMock()

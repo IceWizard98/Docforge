@@ -15,11 +15,11 @@ class OpenAIProvider(OpenAICompatProvider):
     }
     default_max_input_tokens = 128000
 
-    def __init__(self, api_key: str = "", model: str = "gpt-4o", base_url: str = ""):
+    def __init__(self, api_key: str = "", model: str = "", base_url: str = ""):
         settings = get_settings()
         super().__init__(
             api_key=api_key or settings.openai_api_key,
-            model=model,
+            model=model or settings.openai_model,
             base_url=base_url or settings.openai_base_url,
         )
 

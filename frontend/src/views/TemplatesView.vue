@@ -2,10 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { extractApiError } from '@/api/client'
 import { useRouter } from 'vue-router'
-import { FileText, Trash2, Plus, Loader2 } from '@lucide/vue'
+import { FileText, FileUp, Trash2, Plus, Loader2 } from '@lucide/vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ErrorMessage from '@/components/common/ErrorMessage.vue'
+import { useToast } from '@/composables/useToast'
+import { useConfirm } from '@/composables/useConfirm'
 import * as api from '@/api/client'
 
 interface Template {
@@ -15,6 +17,7 @@ interface Template {
   category?: string
   doc_type?: string
   created_at: string
+  hasFile?: boolean
 }
 
 const templates = ref<Template[]>([])
@@ -23,9 +26,17 @@ const error = ref<string | null>(null)
 const showCreator = ref(false)
 const newName = ref('')
 const newDescription = ref('')
+const newFile = ref<File | null>(null)
 const saving = ref(false)
 const creating = ref(false)
 const router = useRouter()
+const toast = useToast()
+const { confirm } = useConfirm()
+
+function onFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  newFile.value = input.files?.[0] ?? null
+}
 
 async function fetchTemplates() {
   loading.value = true
@@ -47,29 +58,42 @@ async function saveTemplate() {
   saving.value = true
   error.value = null
   try {
-    const created = await api.createTemplate({
+    const meta = {
       name: newName.value.trim(),
       description: newDescription.value.trim(),
-    })
+    }
+    const created = newFile.value
+      ? await api.uploadTemplate(newFile.value, meta)
+      : await api.createTemplate(meta)
     templates.value.push({
       id: created.id,
       name: created.name,
       description: created.description,
       category: created.category || 'Generale',
-      created_at: (created as any).created_at || new Date().toISOString(),
+      created_at: created.created_at || new Date().toISOString(),
+      hasFile: created.hasFile,
     })
     showCreator.value = false
     newName.value = ''
     newDescription.value = ''
+    newFile.value = null
   } catch (e: any) {
-    error.value = extractApiError(e, 'Failed to create template')
+    const msg = extractApiError(e, 'Failed to create template')
+    error.value = msg
+    toast.error(msg)
   } finally {
     saving.value = false
   }
 }
 
 async function deleteTemplateItem(id: string) {
-  if (!window.confirm('Eliminare questo template?')) return
+  const ok = await confirm({
+    title: 'Elimina template',
+    message: 'Eliminare questo template?',
+    confirmLabel: 'Elimina',
+    danger: true,
+  })
+  if (!ok) return
   error.value = null
   try {
     await api.deleteTemplate(id)
@@ -105,7 +129,7 @@ function formatDate(dateStr: string): string {
       <h1 class="text-2xl font-bold text-foreground">Template</h1>
       <button
         @click="showCreator = true"
-        class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light transition-colors cursor-pointer"
+        class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
       >
         <Plus class="h-4 w-4" />
         Nuovo Template
@@ -158,6 +182,13 @@ function formatDate(dateStr: string): string {
               <span class="text-xs bg-primary/8 text-primary px-2 py-0.5 rounded">
                 {{ tpl.category || 'Generale' }}
               </span>
+              <span
+                v-if="tpl.hasFile"
+                class="inline-flex items-center gap-1 text-xs bg-secondary/10 text-secondary px-2 py-0.5 rounded"
+              >
+                <FileUp class="h-3 w-3" />
+                DOCX
+              </span>
               <span class="text-xs text-foreground/40 ml-auto">
                 {{ formatDate(tpl.created_at) }}
               </span>
@@ -186,9 +217,20 @@ function formatDate(dateStr: string): string {
             v-model="newDescription"
             placeholder="Descrizione (opzionale)"
             rows="2"
-            class="w-full rounded-lg border border-primary/10 bg-card px-3 py-2 text-sm text-foreground placeholder:text-foreground/30 mb-4 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+            class="w-full rounded-lg border border-primary/10 bg-card px-3 py-2 text-sm text-foreground placeholder:text-foreground/30 mb-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
             aria-label="Descrizione del template"
           />
+          <label class="block mb-4">
+            <span class="text-xs font-medium text-foreground/60">File DOCX (opzionale)</span>
+            <input
+              type="file"
+              accept=".docx"
+              class="mt-1 block w-full text-sm text-foreground/70 file:mr-3 file:rounded-lg file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary hover:file:bg-primary/20 file:cursor-pointer"
+              aria-label="Carica un file DOCX come template"
+              @change="onFileChange"
+            />
+            <span v-if="newFile" class="mt-1 block text-xs text-foreground/50 truncate">{{ newFile.name }}</span>
+          </label>
           <div class="flex justify-end gap-2">
             <button
               @click="showCreator = false"

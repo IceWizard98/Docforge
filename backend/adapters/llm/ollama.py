@@ -24,7 +24,10 @@ class OllamaProvider(OpenAICompatProvider):
         return {"stream": False}
 
     def _structured_extra(self) -> dict:
-        # Ollama's OpenAI-compatible /v1 endpoint enforces JSON via response_format
-        # (the native `format: "json"` param is ignored there, so the model would
-        # otherwise return prose/markdown and JSON parsing fails).
-        return {"response_format": {"type": "json_object"}}
+        # Deliberately NO response_format on Ollama. Forcing json_object makes some
+        # local models (notably gemma4:12b) TRUNCATE their content — e.g. "Ecco tre
+        # tipi:" with the list dropped — producing correct-looking but empty/wrong
+        # answers. In plain mode the same model returns the full answer as
+        # markdown-fenced JSON, which extract_json() already parses. Relying on the
+        # prompt's JSON instructions + extract_json gives far better answer quality.
+        return {}

@@ -47,6 +47,28 @@ class TestListDocuments:
         assert data["meta"]["total"] == 25
         assert len(data["data"]) == 3
 
+    @pytest.mark.asyncio
+    async def test_search_filters_by_title(self):
+        # The search param must add a case-insensitive title filter to the query.
+        captured = {}
+
+        class _Session:
+            async def scalar(self, stmt):
+                return 0
+
+            async def execute(self, stmt):
+                captured["sql"] = str(
+                    stmt.compile(compile_kwargs={"literal_binds": False})
+                )
+                res = MagicMock()
+                res.scalars.return_value.all.return_value = []
+                return res
+
+        repo = DocumentRepository(_Session())
+        await repo.list_documents(search="Contratto", owner_id=str(uuid.uuid4()))
+        assert "lower(documents.title)" in captured["sql"].lower()
+        assert "like" in captured["sql"].lower()
+
 
 class TestCreateDocument:
     @pytest.mark.asyncio
